@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:background="#F5F5F7">
+
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="24dp">
+
+        <LinearLayout
+            android:id="@+id/loginBlock"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_centerInParent="true"
+            android:orientation="vertical"
+            android:visibility="visible">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="PectinWorld Intercom"
+                android:textAlignment="center"
+                android:textColor="#1D1D1F"
+                android:textSize="28sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="8dp"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Введите ваш персональный пароль для идентификации в системе"
+                android:textAlignment="center"
+                android:textColor="#86868B"
+                android:textSize="14sp"
+                android:layout_marginBottom="32dp"/>
+
+            <EditText
+                android:id="@+id/passwordInput"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:hint="Пароль доступа"
+                android:inputType="textPassword"
+                android:background="@android:drawable/editbox_background"
+                android:paddingLeft="16dp"
+                android:paddingRight="16dp"
+                android:layout_marginBottom="16dp"/>
+
+            <Button
+                android:id="@+id/loginButton"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:text="Войти в систему"
+                android:textSize="16sp"
+                android:backgroundTint="#0071E3"
+                android:textColor="#FFFFFF"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/intercomBlock"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_centerInParent="true"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/welcomeText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Привет, Пользователь!"
+                android:textAlignment="center"
+                android:textColor="#1D1D1F"
+                android:textSize="24sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="4dp"/>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Внутренняя связь Pectin World"
+                android:textAlignment="center"
+                android:textColor="#34C759"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="40dp"/>
+
+            <Button
+                android:id="@+id/btnContactOne"
+                android:layout_width="match_parent"
+                android:layout_height="72dp"
+                android:text="Вызвать Коллегу 1"
+                android:textSize="18sp"
+                android:layout_marginBottom="12dp"
+                android:backgroundTint="#FFFFFF"
+                android:textColor="#1D1D1F"
+                style="@style/Widget.AppCompat.Button.Colored"/>
+
+            <Button
+                android:id="@+id/btnContactTwo"
+                android:layout_width="match_parent"
+                android:layout_height="72dp"
+                android:text="Вызвать Коллегу 2"
+                android:textSize="18sp"
+                android:layout_marginBottom="24dp"
+                android:backgroundTint="#FFFFFF"
+                android:textColor="#1D1D1F"
+                style="@style/Widget.AppCompat.Button.Colored"/>
+
+            <Button
+                android:id="@+id/btnGeneralCall"
+                android:layout_width="match_parent"
+                android:layout_height="80dp"
+                android:text="📢 ОБЩИЙ СБОР"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:backgroundTint="#FF3B30"
+                android:textColor="#FFFFFF"/>
+        </LinearLayout>
+
+    </RelativeLayout>
+</ScrollView>
