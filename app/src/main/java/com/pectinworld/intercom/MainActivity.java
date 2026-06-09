@@ -15,24 +15,20 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.SeekBar;
 import android.widget.Toast;
 import java.util.Arrays;
+import java.util.HashMap;
 
 import android.media.MediaFormat;
-
 import androidx.appcompat.app.AppCompatActivity;
-
 import java.nio.ByteBuffer;
-
 import android.media.MediaCodec;
-
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.security.cert.X509Certificate;
-
-import android.media.audiofx.AcousticEchoCanceler;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocket;
@@ -41,7 +37,6 @@ import javax.net.ssl.X509TrustManager;
 
 import android.Manifest;
 import android.content.pm.PackageManager;
-
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
@@ -49,8 +44,9 @@ public class MainActivity extends AppCompatActivity {
 
     private LinearLayout loginBlock, intercomBlock;
     private EditText passwordInput;
-    private Button loginButton, btnContactOne, btnContactTwo, btnGeneralCall;
-    private TextView welcomeText;
+    private Button loginButton, btnGeneralCall;
+    private SeekBar seekContactOne, seekContactTwo;
+    private TextView welcomeText, txtContactOne, txtContactTwo;
 
     private SharedPreferences prefs;
     private static final String PREFS_NAME = "PectinWorldPrefs";
@@ -59,6 +55,11 @@ public class MainActivity extends AppCompatActivity {
     private static final String PASS_VLADIMIR = "v";
     private static final String PASS_GALINA = "g";
     private static final String PASS_SERGEY = "s";
+
+    // ЦВЕТА СЛАЙДЕРОВ ДЛЯ РАЗЛИЧНЫХ СОСТОЯНИЙ СВЯЗИ
+    private static final int COLOR_NEUTRAL = 0xFFFF9800; // Оранжевый (базовый)
+    private static final int COLOR_INCOMING = 0xFFD32F2F; // Красный (тебя вызывают)
+    private static final int COLOR_ACTIVE = 0xFF74985A;   // Твой фирменный зеленый (R:116, G:152, B:90)
 
     private static final String SERVER_HOST = "90.171.130.20";
     private static final int SERVER_PORT = 64738;
@@ -74,17 +75,21 @@ public class MainActivity extends AppCompatActivity {
     private AcousticEchoCanceler echoCanceler;
 
     private MediaCodec opusEncoder;
-    private MediaCodec opusDecoder;
-    private int mySession = -1;
 
+    private int diagnosticCounter = 0;
+
+    DataOutputStream dos = null;
+
+    // ДИНАМИЧЕСКИЙ ПУЛ ДЕКОДЕРОВ: Свой кодек под каждую сессию говорящего!
+    private HashMap<Integer, MediaCodec> decoderPool = new HashMap<>();
+
+    private int mySession = -1;
     private boolean audioStarted = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-
-        // Проверка изменений на Гит.
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, 100);
@@ -95,8 +100,10 @@ public class MainActivity extends AppCompatActivity {
         passwordInput = findViewById(R.id.passwordInput);
         loginButton = findViewById(R.id.loginButton);
         welcomeText = findViewById(R.id.welcomeText);
-        btnContactOne = findViewById(R.id.btnContactOne);
-        btnContactTwo = findViewById(R.id.btnContactTwo);
+        seekContactOne = findViewById(R.id.seekContactOne);
+        seekContactTwo = findViewById(R.id.seekContactTwo);
+        txtContactOne = findViewById(R.id.txtContactOne);
+        txtContactTwo = findViewById(R.id.txtContactTwo);
         btnGeneralCall = findViewById(R.id.btnGeneralCall);
 
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
@@ -125,7 +132,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void setupIntercomUI(String role) {
+    /*private void setupIntercomUI(String role) {
         loginBlock.setVisibility(View.GONE);
         intercomBlock.setVisibility(View.VISIBLE);
         welcomeText.setText("Привет, " + role + "!");
@@ -141,14 +148,126 @@ public class MainActivity extends AppCompatActivity {
             btnContactTwo.setText("📞 Вызвать Галину");
         }
 
+        //btnContactOne.setOnClickListener(v -> startVoiceCommunication("Room_One"));
+        //btnContactTwo.setOnClickListener(v -> startVoiceCommunication("Room_Two"));
+        //btnGeneralCall.setOnClickListener(v -> startVoiceCommunication("Root"));
         btnContactOne.setOnClickListener(v -> startVoiceCommunication("Room_One"));
-        btnContactTwo.setOnClickListener(v -> startVoiceCommunication("Room_Two"));
-        btnGeneralCall.setOnClickListener(v -> startVoiceCommunication("Root"));
+        btnContactTwo.setOnClickListener(v -> startVoiceCommunication("Room_One"));
+        btnGeneralCall.setOnClickListener(v -> startVoiceCommunication("Room_One"));
+    }*/
+
+    private void setupIntercomUI(String role) {
+        loginBlock.setVisibility(View.GONE);
+        intercomBlock.setVisibility(View.VISIBLE);
+        welcomeText.setText("Привет, " + role + "!");
+
+        // Настраиваем текст над слайдерами в зависимости от роли
+        if (role.equals("Владимир")) {
+            txtContactOne.setText("👉 Свайп вправо: Вызвать Галину");
+            txtContactTwo.setText("👉 Свайп вправо: Вызвать Сергея");
+        } else if (role.equals("Галина")) {
+            txtContactOne.setText("👉 Свайп вправо: Вызвать Владимира");
+            txtContactTwo.setText("👉 Свайп вправо: Вызвать Сергея");
+        } else if (role.equals("Сергей")) {
+            txtContactOne.setText("👉 Свайп вправо: Вызвать Владимира");
+            txtContactTwo.setText("👉 Свайп вправо: Вызвать Галину");
+        }
+
+        // Делаем кнопку общего сбора пассивной
+        btnGeneralCall.setEnabled(false);
+        btnGeneralCall.setAlpha(0.5f);
+
+// НАСТРОЙКА СЛАЙДЕРА №1 (ГАЛИНА)
+        seekContactOne.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {}
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {}
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                int progress = seekBar.getProgress();
+
+                // Проверяем, в каком состоянии был слайдер до этого.
+                // Если дорожка зеленая (COLOR_ACTIVE), значит мы БЫЛИ в разговоре и тянем ВЛЕВО для выхода
+                boolean wasActive = (seekBar.getTag() != null && (int)seekBar.getTag() == COLOR_ACTIVE);
+
+                if (wasActive) {
+                    // Если мы выходим: пользователь должен дотянуть ползунок влево (меньше 5%)
+                    if (progress <= 5) {
+                        seekBar.setProgress(0);
+                        seekBar.setTag(COLOR_NEUTRAL);
+                        setSliderTrackColor(seekBar, COLOR_NEUTRAL);
+                        sendExitCommandToServer(dos);
+                        stopAudio(); // ВЫХОД ИЗ КОМНАТЫ
+                        Log.d("AUDIO2", "Свайп влево: Вышли из комнаты 1");
+                    } else {
+                        // Если не дотянул до левого края — возвращаем ползунок обратно вправо (на 100)
+                        seekBar.setProgress(100);
+                    }
+                } else {
+                    // Если мы включаем связь: пользователь должен дотянуть ползунок вправо (больше 95%)
+                    if (progress >= 95) {
+                        seekBar.setProgress(100);
+                        seekBar.setTag(COLOR_ACTIVE); // Запоминаем состояние в Tag
+                        setSliderTrackColor(seekBar, COLOR_ACTIVE);
+                        startVoiceCommunication("Room_One"); // ВХОД В КОМНАТУ
+                    } else {
+                        // Если не дотянул — сбрасываем на ноль
+                        seekBar.setProgress(0);
+                        setSliderTrackColor(seekBar, COLOR_NEUTRAL);
+                    }
+                }
+            }
+        });
+
+        // НАСТРОЙКА СЛАЙДЕРА №2 (СЕРГЕЙ)
+        seekContactTwo.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {}
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {}
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                int progress = seekBar.getProgress();
+                boolean wasActive = (seekBar.getTag() != null && (int)seekBar.getTag() == COLOR_ACTIVE);
+
+                if (wasActive) {
+                    if (progress <= 5) {
+                        seekBar.setProgress(0);
+                        seekBar.setTag(COLOR_NEUTRAL);
+                        setSliderTrackColor(seekBar, COLOR_NEUTRAL);
+                        sendExitCommandToServer(dos);
+                        stopAudio(); // ВЫХОД ИЗ КОМНАТЫ
+                        Log.d("AUDIO2", "Свайп влево: Вышли из комнаты 1");
+                    } else {
+                        seekBar.setProgress(100);
+                    }
+                } else {
+                    if (progress >= 95) {
+                        seekBar.setProgress(100);
+                        seekBar.setTag(COLOR_ACTIVE);
+                        setSliderTrackColor(seekBar, COLOR_ACTIVE);
+                        startVoiceCommunication("Room_One"); // ВХОД В КОМНАТУ
+                    } else {
+                        seekBar.setProgress(0);
+                        setSliderTrackColor(seekBar, COLOR_NEUTRAL);
+                    }
+                }
+            }
+        });
+
+        // В самый конец метода setupIntercomUI:
+        setSliderTrackColor(seekContactOne, COLOR_NEUTRAL);
+        setSliderTrackColor(seekContactTwo, COLOR_NEUTRAL);
     }
 
     private void startVoiceCommunication(String targetRoom) {
         if (isSfxRunning) {
-            stopVoiceCommunication();
+            stopAudio();
             Toast.makeText(this, "Связь отключена", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -158,11 +277,9 @@ public class MainActivity extends AppCompatActivity {
 
         new Thread(() -> {
             SSLSocket tcpSocket = null;
-            DataOutputStream dos = null;
             DataInputStream dis = null;
 
             try {
-                // SSL/TLS соединение
                 TrustManager[] trustAllCerts = new TrustManager[]{
                         new X509TrustManager() {
                             public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
@@ -209,7 +326,6 @@ public class MainActivity extends AppCompatActivity {
 
                 int minBufSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_IN, AUDIO_FORMAT);
 
-// 1. Меняем MIC на VOICE_COMMUNICATION для принудительной активации VoIP-движка Android
                 audioRecord = new AudioRecord(
                         MediaRecorder.AudioSource.VOICE_COMMUNICATION,
                         SAMPLE_RATE,
@@ -218,12 +334,8 @@ public class MainActivity extends AppCompatActivity {
                         minBufSize
                 );
 
-                // БЫЛО:
-// audioTrack = new AudioTrack(AudioManager.STREAM_MUSIC, SAMPLE_RATE, ...);
-
-// СТАЛО:
                 audioTrack = new AudioTrack(
-                        AudioManager.STREAM_VOICE_CALL, // Переключаем на телефонный поток
+                        AudioManager.STREAM_VOICE_CALL,
                         SAMPLE_RATE,
                         CHANNEL_OUT,
                         AUDIO_FORMAT,
@@ -231,146 +343,136 @@ public class MainActivity extends AppCompatActivity {
                         AudioTrack.MODE_STREAM
                 );
 
-// 2. Красивая, чистая инициализация эхоподавителя без дублирования
                 if (audioRecord != null && AcousticEchoCanceler.isAvailable()) {
-                    // Освобождаем старый, если он вдруг был инициализирован ранее
                     if (echoCanceler != null) {
                         try { echoCanceler.release(); } catch (Exception e) {}
                     }
-
-                    // Создаем эхоподавитель, привязанный к сессии нашего микрофона
                     echoCanceler = AcousticEchoCanceler.create(audioRecord.getAudioSessionId());
-
                     if (echoCanceler != null) {
                         echoCanceler.setEnabled(true);
-                        Log.d("AUDIO2", "Аппаратное эхоподавление (AEC) УСПЕШНО ВКЛЮЧЕНО. Экземпляр: " + echoCanceler.getEnabled());
-                    } else {
-                        Log.e("AUDIO2", "Не удалось создать экземпляр AcousticEchoCanceler, хотя система заявила о поддержке");
+                        Log.d("AUDIO2", "Аппаратное эхоподавление (AEC) УСПЕШНО ВКЛЮЧЕНО.");
                     }
-                } else {
-                    Log.w("AUDIO2", "Аппаратное эхоподавление (AEC) НЕ поддерживается устройством или audioRecord == null");
                 }
 
                 audioStarted = false;
 
-                // Основной TCP цикл
-                while (isSfxRunning) {
+                // ГЛАВНЫЙ ЦИКЛ ПРИЕМА СЕТЕВЫХ ПАКЕТОВ
+                while (isSfxRunning && dis != null) {
                     int msgType = dis.readUnsignedShort();
                     int msgLen = dis.readInt();
 
+                    // Читаем тело пакета ОДИН раз строго здесь для всех типов пакетов
                     byte[] msgBody = new byte[msgLen];
                     dis.readFully(msgBody);
 
-                    Log.d("AUDIO3", "Пришел пакет: " + msgType + " (длина: " + msgLen + ")");
-
-                    if (msgType == 0) { // Version reply -> Отправляем валидный Authenticate
-                        String role = prefs.getString(KEY_USER_ROLE, "Unknown");
-                        String username;
-                        switch (role) {
-                            case "Владимир": username = "Vladimir"; break;
-                            case "Галина": username = "Galina"; break;
-                            case "Сергей": username = "Sergey"; break;
-                            default: username = "Unknown";
-                        }
-                        String serverPassword = "PectinWorldIntercom1970";
-                        ByteArrayOutputStream aOs = new ByteArrayOutputStream();
-
-                        // Поле 1: name (тег 1, wire type 2 -> 0x0A)
-                        aOs.write(0x0A);
-                        byte[] uBytes = username.getBytes("UTF-8");
-                        writeVarIntStream(aOs, uBytes.length);
-                        aOs.write(uBytes);
-
-                        // Поле 2: password (тег 2, wire type 2 -> 0x12)
-                        aOs.write(0x12);
-                        byte[] pBytes = serverPassword.getBytes("UTF-8");
-                        writeVarIntStream(aOs, pBytes.length);
-                        aOs.write(pBytes);
-
-                        // Поле 3: tokens (тег 3, wire type 2 -> 0x1A) - Передаем пароль как токен для обхода ACL
-                        aOs.write(0x1A);
-                        byte[] tBytes = serverPassword.getBytes("UTF-8");
-                        writeVarIntStream(aOs, tBytes.length);
-                        aOs.write(tBytes);
-
-                        byte[] authBody = aOs.toByteArray();
-
-                        synchronized (dos) {
-                            dos.writeShort(2); // Authenticate
-                            dos.writeInt(authBody.length);
-                            dos.write(authBody);
-                            dos.flush();
-
-                            dos.writeShort(3); // Ping
-                            dos.writeInt(0);
-                            dos.flush();
-                        }
-                        Log.d("AUDIO2", "Валидный пакет Authenticate с токеном доступа отправлен.");
-                    }
-                    else if (msgType == 13) { // Ping reply
-                        synchronized (dos) {
-                            dos.writeShort(13);
-                            dos.writeInt(msgLen);
-                            dos.write(msgBody);
-                            dos.flush();
-                        }
-                    }
-                    else if (msgType == 23) { // SuggestConfig
-                        Log.d("AUDIO2", "Получен пакет SuggestConfig (Тип 23).");
-                    }
-                    else if (msgType == 15) { // CryptSetup
-                        Log.d("AUDIO", "CryptSetup received, sending minimal response");
-                        byte[] keyReply = new byte[32];
-                        Arrays.fill(keyReply, (byte) 0);
-                        synchronized (dos) {
-                            dos.writeShort(15);
-                            dos.writeInt(keyReply.length);
-                            dos.write(keyReply);
-                            dos.flush();
-                        }
-                    }
-                    else if (msgType == 1) { // UDPTunnel
-                        handleIncomingAudio(msgBody);
-                    }
-                    else if (msgType == 5 && !audioStarted) { // ServerSync
-                        try {
-                            if (msgBody.length > 1 && msgBody[0] == 0x08) {
-                                int[] off = {1};
-                                mySession = readVarIntFromBytes(msgBody, off);
-                                Log.d("AUDIO2", "=== ServerSync === Сессия успешно определена: " + mySession);
+                    // Обертка безопасности внутри цикла, чтобы ошибка в одном пакете не ломала всё приложение
+                    try {
+                        if (msgType == 0) { // Инициализация
+                            String role = prefs.getString(KEY_USER_ROLE, "Unknown");
+                            String username;
+                            switch (role) {
+                                case "Владимир": username = "Vladimir"; break;
+                                case "Галина": username = "Galina"; break;
+                                case "Сергей": username = "Sergey"; break;
+                                default: username = "Unknown";
                             }
-                        } catch (Exception e) {
-                            Log.e("AUDIO2", "Ошибка разбора сессии", e);
+                            String serverPassword = "PectinWorldIntercom1970";
+                            ByteArrayOutputStream aOs = new ByteArrayOutputStream();
+
+                            aOs.write(0x0A);
+                            byte[] uBytes = username.getBytes("UTF-8");
+                            writeVarIntStream(aOs, uBytes.length);
+                            aOs.write(uBytes);
+
+                            aOs.write(0x12);
+                            byte[] pBytes = serverPassword.getBytes("UTF-8");
+                            writeVarIntStream(aOs, pBytes.length);
+                            aOs.write(pBytes);
+
+                            aOs.write(0x1A);
+                            byte[] tBytes = serverPassword.getBytes("UTF-8");
+                            writeVarIntStream(aOs, tBytes.length);
+                            aOs.write(tBytes);
+
+                            byte[] authBody = aOs.toByteArray();
+
+                            synchronized (dos) {
+                                dos.writeShort(2);
+                                dos.writeInt(authBody.length);
+                                dos.write(authBody);
+                                dos.flush();
+
+                                dos.writeShort(3);
+                                dos.writeInt(0);
+                                dos.flush();
+                            }
+                            Log.d("AUDIO2", "Валидный пакет Authenticate отправлен.");
                         }
-
-                        audioStarted = true;
-                        initOpusCodecs();
-                        audioRecord.startRecording();
-
-                        AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-                        if (audioManager != null) {
-                            // Устанавливаем режим "Внутри звонка". Это принудительно переключит аудио-тракт в телефонный режим
-                            audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                        else if (msgType == 11) { // TextMessage (Обработка автовыхода)
+                            try {
+                                String incomingText = new String(msgBody, "UTF-8");
+                                if (incomingText.contains("COMMAND_EXIT")) {
+                                    Log.d("AUDIO2", "Получена команда автовыхода от собеседника!");
+                                    stopAudio(); // Принудительно гасим связь
+                                }
+                            } catch (Exception e) {
+                                Log.e("AUDIO2", "Ошибка разбора текстового пакета", e);
+                            }
                         }
+                        else if (msgType == 13) { // Ping
+                            synchronized (dos) {
+                                dos.writeShort(13);
+                                dos.writeInt(msgLen);
+                                dos.write(msgBody);
+                                dos.flush();
+                            }
+                        }
+                        else if (msgType == 15) { // CryptSetup
+                            byte[] keyReply = new byte[32];
+                            Arrays.fill(keyReply, (byte) 0);
+                            synchronized (dos) {
+                                dos.writeShort(15);
+                                dos.writeInt(keyReply.length);
+                                dos.write(keyReply);
+                                dos.flush();
+                            }
+                        }
+                        else if (msgType == 1) { // Аудиопоток
+                            handleIncomingAudio(msgBody);
+                        }
+                        else if (msgType == 5 && !audioStarted) { // ServerSync
+                            try {
+                                if (msgBody.length > 1 && msgBody[0] == 0x08) {
+                                    int[] off = {1};
+                                    mySession = readVarIntFromBytes(msgBody, off);
+                                    Log.d("AUDIO2", "=== ServerSync === Сессия определена: " + mySession);
+                                }
+                            } catch (Exception e) {
+                                Log.e("AUDIO2", "Ошибка разбора сессии", e);
+                            }
 
-                        audioTrack.play();
+                            audioStarted = true;
+                            initEncoder();
+                            audioRecord.startRecording();
 
-                        final DataOutputStream finalDos = dos;
-                        final String finalTargetRoom = targetRoom;
-                        final int finalSession = mySession;
+                            AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+                            if (audioManager != null) {
+                                audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                            }
 
-                        new Thread(new Runnable() {
-                            @Override
-                            public void run() {
+                            audioTrack.play();
+
+                            final DataOutputStream finalDos = dos;
+                            final String finalTargetRoom = targetRoom;
+                            final int finalSession = mySession;
+
+                            new Thread(() -> {
                                 try {
-                                    Thread.sleep(250); // Даем серверу время завершить синхронизацию
+                                    Thread.sleep(250);
 
                                     int targetChannelId = finalTargetRoom.equals("Root") ? 0 : (finalTargetRoom.equals("Room_One") ? 1 : 2);
-                                    Log.d("AUDIO2", "Отправка UserState (Сессия: " + finalSession + ") в канал: " + targetChannelId);
-
                                     ByteArrayOutputStream joinOs = new ByteArrayOutputStream();
 
-                                    // === ПОЛЕ 1: session (тег 1, wire type 0 -> 0x08) ===
                                     if (finalSession != -1) {
                                         joinOs.write(0x08);
                                         int sessVal = finalSession;
@@ -381,7 +483,6 @@ public class MainActivity extends AppCompatActivity {
                                         joinOs.write(sessVal & 0x7F);
                                     }
 
-                                    // === ПОЛЕ 5: channel_id (тег 5, wire type 0 -> 0x28) ===
                                     joinOs.write(0x28);
                                     int chanVal = targetChannelId;
                                     while ((chanVal & 0xFFFFFF80) != 0L) {
@@ -393,129 +494,74 @@ public class MainActivity extends AppCompatActivity {
                                     byte[] joinBody = joinOs.toByteArray();
 
                                     synchronized (finalDos) {
-                                        finalDos.writeShort(9); // Type 9: UserState
+                                        finalDos.writeShort(9);
                                         finalDos.writeInt(joinBody.length);
                                         finalDos.write(joinBody);
                                         finalDos.flush();
                                     }
-                                    Log.d("AUDIO2", "[Успех] Валидный UserState отправлен. Длина: " + joinBody.length);
-
                                     startAudioSendingLoop(finalDos, finalTargetRoom);
 
                                 } catch (Exception e) {
                                     Log.e("AUDIO2", "Ошибка отправки UserState", e);
                                 }
-                            }
-                        }).start();
+                            }).start();
+                        }
+                    } catch (Exception internalPackEx) {
+                        Log.e("AUDIO2", "Ошибка обработки пакета типа: " + msgType, internalPackEx);
                     }
                 }
 
             } catch (Exception e) {
                 Log.e("AUDIO2", "Error in voice thread", e);
             } finally {
-                stopVoiceCommunication();
+                stopAudio();
                 try { if (tcpSocket != null) tcpSocket.close(); } catch (Exception e) {}
             }
         }).start();
     }
 
-    private void stopAudio() {
+    private void initEncoder() {
         try {
-            Log.d("AUDIO2", "Вызван метод stopAudio(). Начало освобождения ресурсов...");
+            android.media.MediaFormat encFormat = android.media.MediaFormat.createAudioFormat("audio/opus", SAMPLE_RATE, 1);
+            encFormat.setInteger(android.media.MediaFormat.KEY_BIT_RATE, 32000);
+            encFormat.setInteger(android.media.MediaFormat.KEY_MAX_INPUT_SIZE, 1920 * 2);
 
-            // 1. Очищаем эхоподавитель в самом начале остановки
-            if (echoCanceler != null) {
-                try {
-                    echoCanceler.setEnabled(false);
-                    echoCanceler.release();
-                } catch (Exception e) {
-                    Log.e("AUDIO2", "Ошибка при освобождении echoCanceler: " + e.getMessage());
-                }
-                echoCanceler = null;
-                Log.d("AUDIO2", "AcousticEchoCanceler успешно освобожден");
-            }
-
-            // 2. Останавливаем и освобождаем микрофон (AudioRecord)
-            if (audioRecord != null) {
-                try {
-                    if (audioRecord.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
-                        audioRecord.stop();
-                    }
-                    audioRecord.release();
-                } catch (Exception e) {
-                    Log.e("AUDIO2", "Ошибка при остановке audioRecord: " + e.getMessage());
-                }
-                audioRecord = null;
-                Log.d("AUDIO2", "AudioRecord успешно остановлен и сброшен");
-            }
-
-            // 3. Останавливаем и освобождаем динамик (AudioTrack)
-            if (audioTrack != null) {
-                try {
-                    if (audioTrack.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) {
-                        audioTrack.stop();
-                    }
-                    audioTrack.release();
-                } catch (Exception e) {
-                    Log.e("AUDIO2", "Ошибка при остановке audioTrack: " + e.getMessage());
-                }
-                audioTrack = null;
-                Log.d("AUDIO2", "AudioTrack успешно остановлен и сброшен");
-            }
-
-            // 4. Корректно закрываем Медиа-Кодеки Opus
-            // Освобождаем Энкодер (Передача)
-            if (opusEncoder != null) {
-                try {
-                    opusEncoder.stop();
-                    opusEncoder.release();
-                } catch (Exception e) {
-                    Log.e("AUDIO2", "Ошибка при остановке opusEncoder: " + e.getMessage());
-                }
-                opusEncoder = null;
-                Log.d("AUDIO2", "opusEncoder успешно закрыт");
-            }
-
-            // Освобождаем Декодер (Прием)
-            if (opusDecoder != null) {
-                try {
-                    opusDecoder.stop();
-                    opusDecoder.release();
-                } catch (Exception e) {
-                    Log.e("AUDIO2", "Ошибка при остановке opusDecoder: " + e.getMessage());
-                }
-                opusDecoder = null;
-                Log.d("AUDIO2", "opusDecoder успешно закрыт");
-            }
-
-            // Сбрасываем флаг активности звукового движка
-            audioStarted = false;
-            Log.d("AUDIO2", "Все аудио-ресурсы интеркома успешно зачищены.");
-
-            // Добавить в конец метода stopAudio() внутри блока try:
-            AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-            if (audioManager != null) {
-                audioManager.setMode(AudioManager.MODE_NORMAL); // Возвращаем стандартный режим Android
-            }
-
+            opusEncoder = MediaCodec.createEncoderByType("audio/opus");
+            opusEncoder.configure(encFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            opusEncoder.start();
+            Log.d("AUDIO2", "Opus энкодер успешно запущен");
         } catch (Exception e) {
-            Log.e("AUDIO2", "Критическая ошибка в общем блоке stopAudio: " + e.getMessage(), e);
+            Log.e("AUDIO2", "Ошибка старта энкодера: " + e.getMessage());
         }
     }
 
-    private void writeProtobufVarInt(ByteArrayOutputStream os, int value) {
-        while (true) {
-            if ((value & ~0x7F) == 0) {
-                os.write(value);
-                return;
-            } else {
-                os.write((value & 0x7F) | 0x80);
-                value >>>= 7;
-            }
+    // Метод генерации персонального декодера под каждого спикера (УБИРАЕТ ЗАДЕРЖКУ!)
+    private MediaCodec getOrCreateDecoderForSession(int session) {
+        if (decoderPool.containsKey(session)) {
+            return decoderPool.get(session);
+        }
+        try {
+            android.media.MediaFormat decFormat = android.media.MediaFormat.createAudioFormat("audio/opus", SAMPLE_RATE, 1);
+            byte[] csd0 = {
+                    'O', 'p', 'u', 's', 'H', 'e', 'a', 'd', 1, 1, 0, 0,
+                    (byte) 0x80, (byte) 0xBB, 0, 0, 0, 0, 0
+            };
+            byte[] csd1 = new byte[8];
+            decFormat.setByteBuffer("csd-0", java.nio.ByteBuffer.wrap(csd0));
+            decFormat.setByteBuffer("csd-1", java.nio.ByteBuffer.wrap(csd1));
+
+            MediaCodec decoder = MediaCodec.createDecoderByType("audio/opus");
+            decoder.configure(decFormat, null, null, 0);
+            decoder.start();
+
+            decoderPool.put(session, decoder);
+            Log.d("AUDIO2", "---> Создан персональный декодер Opus для сессии #" + session);
+            return decoder;
+        } catch (Exception e) {
+            Log.e("AUDIO2", "Не удалось создать декодер для сессии " + session, e);
+            return null;
         }
     }
-
-    private int diagnosticCounter = 0;
 
     private void handleIncomingAudio(byte[] msgBody) {
         try {
@@ -529,45 +575,32 @@ public class MainActivity extends AppCompatActivity {
             int seq = readMumbleVarIntFromBytes(msgBody, off);
             int opusLen = readMumbleVarIntFromBytes(msgBody, off);
 
-            if (opusDecoder == null) return;
+            // Игнорируем собственный голос, чтобы не забивать аудиотракт эхом!
+            if (session == mySession) return;
 
-            if (opusLen <= 0 || off[0] + opusLen > msgBody.length) {
-                return;
-            }
+            // Получаем или создаем изолированный декодер для конкретного человека
+            MediaCodec currentDecoder = getOrCreateDecoderForSession(session);
+            if (currentDecoder == null) return;
+
+            if (opusLen <= 0 || off[0] + opusLen > msgBody.length) return;
 
             byte[] opusFrame = new byte[opusLen];
             System.arraycopy(msgBody, off[0], opusFrame, 0, opusLen);
 
-            // 1. Подаем фрейм в декодер
-            int inputBufferIndex = opusDecoder.dequeueInputBuffer(10000);
+            int inputBufferIndex = currentDecoder.dequeueInputBuffer(0); // Опрашиваем мгновенно, без задержки (0 мс)
             if (inputBufferIndex >= 0) {
-                ByteBuffer inputBuffer = opusDecoder.getInputBuffer(inputBufferIndex);
+                ByteBuffer inputBuffer = currentDecoder.getInputBuffer(inputBufferIndex);
                 inputBuffer.clear();
                 inputBuffer.put(opusFrame);
-                opusDecoder.queueInputBuffer(inputBufferIndex, 0, opusFrame.length, 0, 0);
+                currentDecoder.queueInputBuffer(inputBufferIndex, 0, opusFrame.length, 0, 0);
             }
 
-            // 2. Достаем раскодированный PCM с обработкой системных статусов Android
             MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
-            int outputBufferIndex = opusDecoder.dequeueOutputBuffer(bufferInfo, 10000);
+            int outputBufferIndex = currentDecoder.dequeueOutputBuffer(bufferInfo, 0); // Мгновенный опрос
 
-            if (logThis) {
-                Log.d("AUDIO_TRACK", "Первичный статус dequeueOutputBuffer: " + outputBufferIndex);
-            }
-
-            // Обрабатываем мета-статусы, если они пришли вместо индекса буфера
-            if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                MediaFormat newFormat = opusDecoder.getOutputFormat();
-                if (logThis) {
-                    Log.d("AUDIO_TRACK", "Декодер Opus изменил формат вывода: " + newFormat);
-                }
-            }
-
-            // Запускаем цикл разбора (обрабатываем как текущий буфер, так и последующие)
-            while (outputBufferIndex >= 0 || outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED || outputBufferIndex == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED) {
-
+            while (outputBufferIndex >= 0 || outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                 if (outputBufferIndex >= 0) {
-                    ByteBuffer outputBuffer = opusDecoder.getOutputBuffer(outputBufferIndex);
+                    ByteBuffer outputBuffer = currentDecoder.getOutputBuffer(outputBufferIndex);
                     if (outputBuffer != null && bufferInfo.size > 0) {
                         byte[] pcmFrame = new byte[bufferInfo.size];
                         outputBuffer.position(bufferInfo.offset);
@@ -575,26 +608,211 @@ public class MainActivity extends AppCompatActivity {
                         outputBuffer.get(pcmFrame);
 
                         if (audioTrack != null) {
+                            // Если буфер накопил старье (задержка звука), сбрасываем хвост перед выводом
                             if (audioTrack.getPlayState() != AudioTrack.PLAYSTATE_PLAYING) {
-                                Log.w("AUDIO_TRACK", "Принудительный старт AudioTrack во время воспроизведения");
                                 audioTrack.play();
                             }
-
-                            // Запись звука напрямую в динамик Android
-                            int written = audioTrack.write(pcmFrame, 0, pcmFrame.length);
-                            if (logThis) {
-                                Log.d("AUDIO_TRACK", "==> ЗВУК В ДИНАМИКЕ! Выведено байт: " + written + " из " + pcmFrame.length);
+                            synchronized (audioTrack) {
+                                audioTrack.write(pcmFrame, 0, pcmFrame.length);
                             }
                         }
                     }
-                    opusDecoder.releaseOutputBuffer(outputBufferIndex, false);
+                    currentDecoder.releaseOutputBuffer(outputBufferIndex, false);
                 }
-
-                // Запрашиваем следующий буфер без задержки
-                outputBufferIndex = opusDecoder.dequeueOutputBuffer(bufferInfo, 0);
+                outputBufferIndex = currentDecoder.dequeueOutputBuffer(bufferInfo, 0);
             }
         } catch (Exception e) {
             Log.e("AUDIO_TRACK", "Критический сбой в handleIncomingAudio", e);
+        }
+    }
+
+    private void startAudioSendingLoop(final DataOutputStream dos, String roomName) {
+        Log.d("AUDIO2", "Audio sending loop STARTED");
+        new Thread(() -> {
+            // Для 48000Гц 16бит моно, фрейм 20мс — это ровно 960 шортов (1920 байт)
+            int frameSizeInBytes = 1920;
+            byte[] audioBuffer = new byte[frameSizeInBytes];
+            MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
+            int sequenceNumber = 0;
+
+            try {
+                while (isSfxRunning && audioRecord != null && audioRecord.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+
+                    int offset = 0;
+                    while (offset < frameSizeInBytes && isSfxRunning) {
+                        int read = audioRecord.read(audioBuffer, offset, frameSizeInBytes - offset);
+                        if (read > 0) {
+                            offset += read;
+                        } else {
+                            try { Thread.sleep(2); } catch (InterruptedException e) {}
+                        }
+                    }
+                    if (!isSfxRunning) break;
+
+                    if (opusEncoder == null) continue;
+
+                    int inputBufferIndex = opusEncoder.dequeueInputBuffer(0); // Опрос 0мс снижает лаг передачи
+                    if (inputBufferIndex >= 0) {
+                        ByteBuffer inputBuffer = opusEncoder.getInputBuffer(inputBufferIndex);
+                        inputBuffer.clear();
+                        inputBuffer.put(audioBuffer, 0, frameSizeInBytes);
+                        opusEncoder.queueInputBuffer(inputBufferIndex, 0, frameSizeInBytes, System.nanoTime() / 1000, 0);
+                    }
+
+                    int outputBufferIndex = opusEncoder.dequeueOutputBuffer(bufferInfo, 0);
+                    while (outputBufferIndex >= 0) {
+                        ByteBuffer outputBuffer = opusEncoder.getOutputBuffer(outputBufferIndex);
+                        byte[] opusData = new byte[bufferInfo.size];
+                        outputBuffer.get(opusData);
+
+                        ByteArrayOutputStream pcmPayloadOs = new ByteArrayOutputStream();
+                        pcmPayloadOs.write(0x80); // Тип кодека (Opus)
+
+                        writeVarIntLongStream(pcmPayloadOs, (long) (sequenceNumber++));
+                        writeVarIntLongStream(pcmPayloadOs, (long) (opusData.length));
+                        pcmPayloadOs.write(opusData);
+
+                        byte[] rawAudioPayload = pcmPayloadOs.toByteArray();
+
+                        synchronized (dos) {
+                            dos.writeShort(1);
+                            dos.writeInt(rawAudioPayload.length);
+                            dos.write(rawAudioPayload);
+                            dos.flush();
+                        }
+
+                        opusEncoder.releaseOutputBuffer(outputBufferIndex, false);
+                        outputBufferIndex = opusEncoder.dequeueOutputBuffer(bufferInfo, 0);
+                    }
+                }
+            } catch (Exception e) {
+                Log.e("AUDIO2", "Критическая ошибка в аудио-петле отправки", e);
+            }
+        }).start();
+    }
+
+    private void stopAudio() {
+        try {
+            Log.d("AUDIO2", "Вызван метод stopAudio(). Освобождение всех ресурсов...");
+            isSfxRunning = false;
+
+            if (echoCanceler != null) {
+                try {
+                    echoCanceler.setEnabled(false);
+                    echoCanceler.release();
+                } catch (Exception ignored) {}
+                echoCanceler = null;
+            }
+
+            if (audioRecord != null) {
+                try {
+                    if (audioRecord.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+                        audioRecord.stop();
+                    }
+                    audioRecord.release();
+                } catch (Exception ignored) {}
+                audioRecord = null;
+            }
+
+            if (audioTrack != null) {
+                try {
+                    if (audioTrack.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) {
+                        audioTrack.stop();
+                    }
+                    audioTrack.release();
+                } catch (Exception ignored) {}
+                audioTrack = null;
+            }
+
+            if (opusEncoder != null) {
+                try {
+                    opusEncoder.stop();
+                    opusEncoder.release();
+                } catch (Exception ignored) {}
+                opusEncoder = null;
+            }
+
+            // Освобождаем ВЕСЬ пул динамических декодеров спикеров
+            for (int sessionKey : decoderPool.keySet()) {
+                MediaCodec dec = decoderPool.get(sessionKey);
+                if (dec != null) {
+                    try {
+                        dec.stop();
+                        dec.release();
+                    } catch (Exception ignored) {}
+                }
+            }
+            decoderPool.clear();
+
+            audioStarted = false;
+
+            AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            if (audioManager != null) {
+                audioManager.setMode(AudioManager.MODE_NORMAL);
+            }
+            Log.d("AUDIO2", "Очистка аудио-движка завершена успешно.");
+
+            runOnUiThread(() -> {
+                if (seekContactOne != null) {
+                    seekContactOne.setProgress(0);
+                    seekContactOne.setTag(COLOR_NEUTRAL); // СБРОС ТЭГА
+                    setSliderTrackColor(seekContactOne, COLOR_NEUTRAL);
+                }
+                if (seekContactTwo != null) {
+                    seekContactTwo.setProgress(0);
+                    seekContactTwo.setTag(COLOR_NEUTRAL); // СБРОС ТЭГА
+                    setSliderTrackColor(seekContactTwo, COLOR_NEUTRAL);
+                }
+            });
+        } catch (Exception e) {
+            Log.e("AUDIO2", "Ошибка в stopAudio: " + e.getMessage());
+        }
+    }
+
+    private void sendExitCommandToServer(final DataOutputStream finalDos) {
+        if (finalDos == null) return; // Проверяем переданный поток
+
+        new Thread(() -> {
+            try {
+                String msg = "COMMAND_EXIT";
+                byte[] msgBytes = msg.getBytes("UTF-8");
+
+                ByteArrayOutputStream txOs = new ByteArrayOutputStream();
+
+                // Поле №3: channel_id (ID комнаты = 1)
+                txOs.write(0x18);
+                txOs.write(1);
+
+                // Поле №5: message
+                txOs.write(0x2A);
+                txOs.write(msgBytes.length);
+                txOs.write(msgBytes);
+
+                byte[] txBody = txOs.toByteArray();
+
+                // Синхронизируемся по переданному потоку
+                synchronized (finalDos) {
+                    finalDos.writeShort(11); // TextMessage
+                    finalDos.writeInt(txBody.length);
+                    finalDos.write(txBody);
+                    finalDos.flush();
+                }
+                Log.d("AUDIO2", "Скрытая команда COMMAND_EXIT отправлена в канал.");
+            } catch (Exception e) {
+                Log.e("AUDIO2", "Ошибка отправки команды выхода", e);
+            }
+        }).start();
+    }
+
+    private void writeVarIntStream(ByteArrayOutputStream os, int value) {
+        while (true) {
+            if ((value & ~0x7F) == 0) {
+                os.write(value);
+                return;
+            } else {
+                os.write((value & 0x7F) | 0x80);
+                value >>>= 7;
+            }
         }
     }
 
@@ -612,166 +830,27 @@ public class MainActivity extends AppCompatActivity {
         return value;
     }
 
-    private void initOpusCodecs() {
-        try {
-            // =================================================================
-            // 1. НАСТРОЙКА ЭНКОДЕРА (Запись микрофона и отправка в сеть)
-            // =================================================================
-            android.media.MediaFormat encFormat = android.media.MediaFormat.createAudioFormat("audio/opus", SAMPLE_RATE, 1);
-            encFormat.setInteger(android.media.MediaFormat.KEY_BIT_RATE, 32000);
-            encFormat.setInteger(android.media.MediaFormat.KEY_MAX_INPUT_SIZE, 1920 * 2);
-
-            opusEncoder = MediaCodec.createEncoderByType("audio/opus");
-            opusEncoder.configure(encFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
-            opusEncoder.start();
-
-            // =================================================================
-            // 2. НАСТРОЙКА ДЕКОДЕРА (Прием из сети и вывод в динамик)
-            // =================================================================
-            android.media.MediaFormat decFormat = android.media.MediaFormat.createAudioFormat("audio/opus", SAMPLE_RATE, 1);
-
-            // Строго 19 байт структуры OpusHead (без лишнего мусора)
-            byte[] csd0 = {
-                    'O', 'p', 'u', 's', 'H', 'e', 'a', 'd', // 0-7: Магическая сигнатура
-                    1,                                      // 8: Версия спецификации (всегда 1)
-                    1,                                      // 9: Количество каналов (1 - моно)
-                    0, 0,                                   // 10-11: Pre-skip (в семплах) - ставим 0
-                    (byte) 0x80, (byte) 0xBB, 0, 0,         // 12-15: Частота 48000 Гц (0xBB80 в Little Endian)
-                    0, 0,                                   // 16-17: Output gain (0)
-                    0                                       // 18: Mapping family (0 - моно/стерео стандарт)
-            };
-
-            // Для csd-1 в Android используется задержка пре-скипа в наносекундах, представленная как long (8 байт)
-            byte[] csd1 = new byte[8]; // заполнен нулями по умолчанию
-
-            decFormat.setByteBuffer("csd-0", java.nio.ByteBuffer.wrap(csd0));
-            decFormat.setByteBuffer("csd-1", java.nio.ByteBuffer.wrap(csd1));
-
-            opusDecoder = MediaCodec.createDecoderByType("audio/opus");
-            opusDecoder.configure(decFormat, null, null, 0);
-            opusDecoder.start();
-
-            Log.d("AUDIO2", "Opus codecs initialized успешно (Энкодер и Декодер запущены)");
-        } catch (Exception e) {
-            Log.e("AUDIO2", "Init error: " + e.getMessage(), e);
-        }
-    }
-
     private void writeVarIntLongStream(ByteArrayOutputStream os, long value) throws IOException {
         if (value < 0x80) {
-            // 7-bit positive number (0xxxxxxx)
             os.write((byte) value);
         } else if (value < 0x4000) {
-            // 14-bit positive number (10xxxxxx + 1 byte)
             os.write((byte) ((value >> 8) | 0x80));
             os.write((byte) (value & 0xFF));
         } else if (value < 0x200000) {
-            // 21-bit positive number (110xxxxx + 2 bytes)
             os.write((byte) ((value >> 16) | 0xC0));
             os.write((byte) ((value >> 8) & 0xFF));
             os.write((byte) (value & 0xFF));
         } else if (value < 0x10000000) {
-            // 28-bit positive number (1110xxxx + 3 bytes)
             os.write((byte) ((value >> 24) | 0xE0));
             os.write((byte) ((value >> 16) & 0xFF));
             os.write((byte) ((value >> 8) & 0xFF));
             os.write((byte) (value & 0xFF));
         } else {
-            // Универсальный 32-битный вариант (111100__ + 4 bytes)
             os.write((byte) 0xF0);
             os.write((byte) ((value >> 24) & 0xFF));
             os.write((byte) ((value >> 16) & 0xFF));
             os.write((byte) ((value >> 8) & 0xFF));
             os.write((byte) (value & 0xFF));
-        }
-    }
-
-    private void startAudioSendingLoop(final DataOutputStream dos, String roomName) {
-        Log.d("AUDIO2", "Audio sending loop STARTED (Strict TCP Verbatim Tunnel)");
-        new Thread(() -> {
-            int frameSize = 1920; // 20ms фрейм для 48000Hz 16bit Mono
-            byte[] audioBuffer = new byte[frameSize];
-            MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
-            int sequenceNumber = 0;
-
-            try {
-                while (isSfxRunning && audioRecord != null && audioRecord.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
-
-                    // Гарантированное накопление ровно 1920 байт с микрофона
-                    int offset = 0;
-                    while (offset < frameSize && isSfxRunning) {
-                        int read = audioRecord.read(audioBuffer, offset, frameSize - offset);
-                        if (read > 0) {
-                            offset += read;
-                        } else {
-                            try { Thread.sleep(5); } catch (InterruptedException e) {}
-                        }
-                    }
-                    if (!isSfxRunning) break;
-                    int readBytes = offset;
-
-                    // Подаем накопленный PCM-буфер в Opus-кодер
-                    int inputBufferIndex = opusEncoder.dequeueInputBuffer(10000);
-                    if (inputBufferIndex >= 0) {
-                        ByteBuffer inputBuffer = opusEncoder.getInputBuffer(inputBufferIndex);
-                        inputBuffer.clear();
-                        inputBuffer.put(audioBuffer, 0, readBytes);
-                        opusEncoder.queueInputBuffer(inputBufferIndex, 0, readBytes, System.nanoTime() / 1000, 0);
-                    }
-
-                    int outputBufferIndex = opusEncoder.dequeueOutputBuffer(bufferInfo, 10000);
-                    while (outputBufferIndex >= 0) {
-                        ByteBuffer outputBuffer = opusEncoder.getOutputBuffer(outputBufferIndex);
-                        byte[] opusData = new byte[bufferInfo.size];
-                        outputBuffer.get(opusData);
-
-                        // === СБОРКА АУДИО-ПА КЕТА ПО СПЕЦИФИКАЦИИ MUMBLE VOICE CORRECT ===
-                        ByteArrayOutputStream pcmPayloadOs = new ByteArrayOutputStream();
-
-                        // 1. Заголовок (1 байт): Кодек Opus (нормальный разговор, не шепот/крик) -> тип 4 (0x80)
-                        pcmPayloadOs.write(0x80);
-
-                        // 2. ИСПОЛЬЗУЕМ СТРОГО writeMumbleVoiceVarInt ДЛЯ ГОЛОСА!
-                        // Пишем Sequence Number
-                        writeVarIntLongStream(pcmPayloadOs, (long) (sequenceNumber++));
-                        writeVarIntLongStream(pcmPayloadOs, (long) (opusData.length));
-
-                        // 3. Добавляем сырые байты кодека
-                        pcmPayloadOs.write(opusData);
-
-                        byte[] rawAudioPayload = pcmPayloadOs.toByteArray();
-
-                        // --- ОТПРАВКА В TCP СОКЕТ ---
-                        synchronized (dos) {
-                            dos.writeShort(1); // Type 1: UDPTunnel (Аудио через TCP)
-                            dos.writeInt(rawAudioPayload.length); // Длина всего payload
-                            dos.write(rawAudioPayload); // Байты аудио-пакета
-                            dos.flush();
-                        }
-
-                        if (sequenceNumber % 50 == 0) {
-                            Log.d("AUDIO2", "Отправлено 50 аудио-пакетов. Последний seq=" + (sequenceNumber - 1) + ", len=" + rawAudioPayload.length);
-                        }
-
-                        opusEncoder.releaseOutputBuffer(outputBufferIndex, false);
-                        outputBufferIndex = opusEncoder.dequeueOutputBuffer(bufferInfo, 0);
-                    }
-                }
-            } catch (Exception e) {
-                Log.e("AUDIO2", "Критическая ошибка в аудио-петле отправки", e);
-            }
-        }).start();
-    }
-
-    private void writeVarIntStream(ByteArrayOutputStream os, int value) {
-        while (true) {
-            if ((value & ~0x7F) == 0) {
-                os.write(value);
-                return;
-            } else {
-                os.write((value & 0x7F) | 0x80);
-                value >>>= 7;
-            }
         }
     }
 
@@ -781,19 +860,14 @@ public class MainActivity extends AppCompatActivity {
         int v = 0;
 
         if ((b & 0x80) == 0) {
-            // 7-битное число
             v = b & 0x7F;
         } else if ((b & 0xC0) == 0x80) {
-            // 14-битное число
             v = ((b & 0x3F) << 8) | (data[o++] & 0xFF);
         } else if ((b & 0xE0) == 0xC0) {
-            // 21-битное число
             v = ((b & 0x1F) << 16) | ((data[o++] & 0xFF) << 8) | (data[o++] & 0xFF);
         } else if ((b & 0xF0) == 0xE0) {
-            // 28-битное число
             v = ((b & 0x0F) << 24) | ((data[o++] & 0xFF) << 16) | ((data[o++] & 0xFF) << 8) | (data[o++] & 0xFF);
         } else if ((b & 0xF0) == 0xF0) {
-            // 32-битное число (4 байта далее)
             v = ((data[o++] & 0xFF) << 24) | ((data[o++] & 0xFF) << 16) | ((data[o++] & 0xFF) << 8) | (data[o++] & 0xFF);
         }
 
@@ -801,29 +875,16 @@ public class MainActivity extends AppCompatActivity {
         return v;
     }
 
-    private void stopVoiceCommunication() {
-        isSfxRunning = false;
-        if (audioRecord != null) {
-            try { audioRecord.stop(); } catch (Exception ignored) {}
-            audioRecord.release();
-            audioRecord = null;
-        }
-        if (audioTrack != null) {
-            try { audioTrack.stop(); } catch (Exception ignored) {}
-            audioTrack.release();
-            audioTrack = null;
-        }
-        if (echoCanceler != null) {
-            echoCanceler.release();
-            echoCanceler = null;
+    private void setSliderTrackColor(SeekBar seekBar, int color) {
+        if (seekBar != null && seekBar.getProgressDrawable() != null) {
+            // Красим подложку (LayerDrawable / Shape) в нужный нам цвет
+            seekBar.getProgressDrawable().setColorFilter(color, android.graphics.PorterDuff.Mode.SRC_IN);
         }
     }
 
     @Override
     protected void onDestroy() {
-
         stopAudio();
         super.onDestroy();
-        stopVoiceCommunication();
     }
 }

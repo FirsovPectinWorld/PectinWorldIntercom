@@ -87,37 +87,60 @@
                 android:textStyle="bold"
                 android:layout_marginBottom="40dp"/>
 
-            <Button
-                android:id="@+id/btnContactOne"
+            <TextView
+                android:id="@+id/txtContactOne"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="👉 Свайп вправо: Вызвать Галину"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="#333333"
+                android:layout_marginBottom="6dp" />
+            <SeekBar
+                android:id="@+id/seekContactOne"
                 android:layout_width="match_parent"
-                android:layout_height="72dp"
-                android:text="Вызвать Коллегу 1"
-                android:textSize="18sp"
-                android:layout_marginBottom="12dp"
-                android:backgroundTint="#FFFFFF"
-                android:textColor="#1D1D1F"
-                style="@style/Widget.AppCompat.Button.Colored"/>
+                android:layout_height="56dp"
+                android:max="100"
+                android:progress="0"
+                android:splitTrack="false"
+                android:progressDrawable="@drawable/slider_track"
+                android:thumb="@drawable/slider_thumb"
+                android:thumbOffset="0dp"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:layout_marginBottom="24dp" />
 
-            <Button
-                android:id="@+id/btnContactTwo"
+            <TextView
+                android:id="@+id/txtContactTwo"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="👉 Свайп вправо: Вызвать Сергея"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="#333333"
+                android:layout_marginBottom="6dp" />
+            <SeekBar
+                android:id="@+id/seekContactTwo"
                 android:layout_width="match_parent"
-                android:layout_height="72dp"
-                android:text="Вызвать Коллегу 2"
-                android:textSize="18sp"
-                android:layout_marginBottom="24dp"
-                android:backgroundTint="#FFFFFF"
-                android:textColor="#1D1D1F"
-                style="@style/Widget.AppCompat.Button.Colored"/>
+                android:layout_height="56dp"
+                android:max="100"
+                android:progress="0"
+                android:splitTrack="false"
+                android:progressDrawable="@drawable/slider_track"
+                android:thumb="@drawable/slider_thumb"
+                android:thumbOffset="0dp"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:layout_marginBottom="24dp" />
 
             <Button
                 android:id="@+id/btnGeneralCall"
                 android:layout_width="match_parent"
-                android:layout_height="80dp"
-                android:text="📢 ОБЩИЙ СБОР"
-                android:textSize="20sp"
-                android:textStyle="bold"
-                android:backgroundTint="#FF3B30"
-                android:textColor="#FFFFFF"/>
+                android:layout_height="wrap_content"
+                android:text="📢 Общий сбор (Неактивна)"
+                android:enabled="false"
+                android:alpha="0.5"
+                android:layout_marginTop="12dp" />
         </LinearLayout>
 
     </RelativeLayout>
