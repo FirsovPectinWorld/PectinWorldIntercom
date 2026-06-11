@@ -40,6 +40,9 @@ import android.content.pm.PackageManager;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import android.content.Intent;
+import android.os.Build;
+
 public class MainActivity extends AppCompatActivity {
 
     private LinearLayout loginBlock, intercomBlock;
@@ -85,6 +88,7 @@ public class MainActivity extends AppCompatActivity {
 
     private int mySession = -1;
     private boolean audioStarted = false;
+    private String currentLoggedInRole = "Unknown";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -110,8 +114,12 @@ public class MainActivity extends AppCompatActivity {
         String savedRole = prefs.getString(KEY_USER_ROLE, null);
 
         if (savedRole != null) {
+            currentLoggedInRole = savedRole;
+            // Роль уже известна с прошлого раза! Сразу запускаем сервис с правильным именем
+            startIntercomServiceWithRole(savedRole);
             setupIntercomUI(savedRole);
         } else {
+            Log.d("AUDIO2", "Сервис не запущен: ожидаем авторизации пользователя.");
             loginButton.setOnClickListener(v -> handleLogin());
         }
     }
@@ -125,36 +133,27 @@ public class MainActivity extends AppCompatActivity {
         else if (enteredPassword.equals(PASS_SERGEY)) detectedRole = "Сергей";
 
         if (detectedRole != null) {
-            prefs.edit().putString(KEY_USER_ROLE, detectedRole).apply();
+            currentLoggedInRole = detectedRole; // Сохраняем в оперативку
+            prefs.edit().putString(KEY_USER_ROLE, detectedRole).commit(); // Жестко пишем на диск
+            // Запускаем сервис ПЕРВЫЙ раз сразу после успешного логина!
+            startIntercomServiceWithRole(detectedRole);
             setupIntercomUI(detectedRole);
         } else {
             Toast.makeText(this, "Неверный пароль доступа!", Toast.LENGTH_SHORT).show();
         }
     }
 
-    /*private void setupIntercomUI(String role) {
-        loginBlock.setVisibility(View.GONE);
-        intercomBlock.setVisibility(View.VISIBLE);
-        welcomeText.setText("Привет, " + role + "!");
+    private void startIntercomServiceWithRole(String role) {
+        Intent serviceIntent = new Intent(this, IntercomService.class);
+        serviceIntent.putExtra("USER_ROLE_EXTRA", role); // Передаем чистую строку "Владимир"/"Галина"
 
-        if (role.equals("Владимир")) {
-            btnContactOne.setText("📞 Вызвать Галину");
-            btnContactTwo.setText("📞 Вызвать Сергея");
-        } else if (role.equals("Галина")) {
-            btnContactOne.setText("📞 Вызвать Владимира");
-            btnContactTwo.setText("📞 Вызвать Сергея");
-        } else if (role.equals("Сергей")) {
-            btnContactOne.setText("📞 Вызвать Владимира");
-            btnContactTwo.setText("📞 Вызвать Галину");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent);
+        } else {
+            startService(serviceIntent);
         }
-
-        //btnContactOne.setOnClickListener(v -> startVoiceCommunication("Room_One"));
-        //btnContactTwo.setOnClickListener(v -> startVoiceCommunication("Room_Two"));
-        //btnGeneralCall.setOnClickListener(v -> startVoiceCommunication("Root"));
-        btnContactOne.setOnClickListener(v -> startVoiceCommunication("Room_One"));
-        btnContactTwo.setOnClickListener(v -> startVoiceCommunication("Room_One"));
-        btnGeneralCall.setOnClickListener(v -> startVoiceCommunication("Room_One"));
-    }*/
+        Log.d("AUDIO2", "Команда на запуск IntercomService отправлена для роли: " + role);
+    }
 
     private void setupIntercomUI(String role) {
         loginBlock.setVisibility(View.GONE);
@@ -368,13 +367,24 @@ public class MainActivity extends AppCompatActivity {
                     // Обертка безопасности внутри цикла, чтобы ошибка в одном пакете не ломала всё приложение
                     try {
                         if (msgType == 0) { // Инициализация
-                            String role = prefs.getString(KEY_USER_ROLE, "Unknown");
+                            String role = currentLoggedInRole;
+
+                            Log.d("AUDIO2", "MainActivity считывает роль для отправки Authenticate: " + role);
                             String username;
                             switch (role) {
                                 case "Владимир": username = "Vladimir"; break;
                                 case "Галина": username = "Galina"; break;
                                 case "Сергей": username = "Sergey"; break;
-                                default: username = "Unknown";
+                                default:
+                                    // Если имя еще не настроено, создаем уникальное имя на основе ID устройства,
+                                    // чтобы телефоны не выбивали друг друга с сервера!
+                                    String androidId = android.provider.Settings.Secure.getString(
+                                            getContentResolver(), android.provider.Settings.Secure.ANDROID_ID
+                                    );
+                                    if (androidId == null || androidId.isEmpty()) {
+                                        androidId = String.valueOf((int)(Math.random() * 10000));
+                                    }
+                                    username = "Device_" + androidId.substring(0, Math.min(androidId.length(), 6));
                             }
                             String serverPassword = "PectinWorldIntercom1970";
                             ByteArrayOutputStream aOs = new ByteArrayOutputStream();
