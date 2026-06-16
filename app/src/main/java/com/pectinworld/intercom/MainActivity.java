@@ -62,7 +62,7 @@ public class MainActivity extends AppCompatActivity {
     // ЦВЕТА СЛАЙДЕРОВ ДЛЯ РАЗЛИЧНЫХ СОСТОЯНИЙ СВЯЗИ
     private static final int COLOR_NEUTRAL = 0xFFFF9800; // Оранжевый (базовый)
     private static final int COLOR_INCOMING = 0xFFD32F2F; // Красный (тебя вызывают)
-    private static final int COLOR_ACTIVE = 0xFF74985A;   // Твой фирменный зеленый (R:116, G:152, B:90)
+    private static final int COLOR_ACTIVE = 0xFF74985A;   // Твой фирменный зеленый
 
     private static final String SERVER_HOST = "90.171.130.20";
     private static final int SERVER_PORT = 64738;
@@ -78,12 +78,11 @@ public class MainActivity extends AppCompatActivity {
     private AcousticEchoCanceler echoCanceler;
 
     private MediaCodec opusEncoder;
-
     private int diagnosticCounter = 0;
 
     DataOutputStream dos = null;
 
-    // ДИНАМИЧЕСКИЙ ПУЛ ДЕКОДЕРОВ: Свой кодек под каждую сессию говорящего!
+    // ДИНАМИЧЕСКИЙ ПУЛ ДЕКОДЕРОВ
     private HashMap<Integer, MediaCodec> decoderPool = new HashMap<>();
 
     private int mySession = -1;
@@ -115,7 +114,6 @@ public class MainActivity extends AppCompatActivity {
 
         if (savedRole != null) {
             currentLoggedInRole = savedRole;
-            // Роль уже известна с прошлого раза! Сразу запускаем сервис с правильным именем
             startIntercomServiceWithRole(savedRole);
             setupIntercomUI(savedRole);
         } else {
@@ -133,9 +131,8 @@ public class MainActivity extends AppCompatActivity {
         else if (enteredPassword.equals(PASS_SERGEY)) detectedRole = "Сергей";
 
         if (detectedRole != null) {
-            currentLoggedInRole = detectedRole; // Сохраняем в оперативку
-            prefs.edit().putString(KEY_USER_ROLE, detectedRole).commit(); // Жестко пишем на диск
-            // Запускаем сервис ПЕРВЫЙ раз сразу после успешного логина!
+            currentLoggedInRole = detectedRole;
+            prefs.edit().putString(KEY_USER_ROLE, detectedRole).commit();
             startIntercomServiceWithRole(detectedRole);
             setupIntercomUI(detectedRole);
         } else {
@@ -145,7 +142,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void startIntercomServiceWithRole(String role) {
         Intent serviceIntent = new Intent(this, IntercomService.class);
-        serviceIntent.putExtra("USER_ROLE_EXTRA", role); // Передаем чистую строку "Владимир"/"Галина"
+        serviceIntent.putExtra("USER_ROLE_EXTRA", role);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent);
@@ -160,7 +157,6 @@ public class MainActivity extends AppCompatActivity {
         intercomBlock.setVisibility(View.VISIBLE);
         welcomeText.setText("Привет, " + role + "!");
 
-        // Настраиваем текст над слайдерами в зависимости от роли
         if (role.equals("Владимир")) {
             txtContactOne.setText("👉 Свайп вправо: Вызвать Галину");
             txtContactTwo.setText("👉 Свайп вправо: Вызвать Сергея");
@@ -172,11 +168,10 @@ public class MainActivity extends AppCompatActivity {
             txtContactTwo.setText("👉 Свайп вправо: Вызвать Галину");
         }
 
-        // Делаем кнопку общего сбора пассивной
         btnGeneralCall.setEnabled(false);
         btnGeneralCall.setAlpha(0.5f);
 
-// НАСТРОЙКА СЛАЙДЕРА №1 (ГАЛИНА)
+        // НАСТРОЙКА СЛАЙДЕРА №1
         seekContactOne.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {}
@@ -187,33 +182,31 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onStopTrackingTouch(SeekBar seekBar) {
                 int progress = seekBar.getProgress();
-
-                // Проверяем, в каком состоянии был слайдер до этого.
-                // Если дорожка зеленая (COLOR_ACTIVE), значит мы БЫЛИ в разговоре и тянем ВЛЕВО для выхода
                 boolean wasActive = (seekBar.getTag() != null && (int)seekBar.getTag() == COLOR_ACTIVE);
 
                 if (wasActive) {
-                    // Если мы выходим: пользователь должен дотянуть ползунок влево (меньше 5%)
                     if (progress <= 5) {
                         seekBar.setProgress(0);
                         seekBar.setTag(COLOR_NEUTRAL);
                         setSliderTrackColor(seekBar, COLOR_NEUTRAL);
                         sendExitCommandToServer(dos);
-                        stopAudio(); // ВЫХОД ИЗ КОМНАТЫ
+                        stopAudio();
                         Log.d("AUDIO2", "Свайп влево: Вышли из комнаты 1");
                     } else {
-                        // Если не дотянул до левого края — возвращаем ползунок обратно вправо (на 100)
                         seekBar.setProgress(100);
                     }
                 } else {
-                    // Если мы включаем связь: пользователь должен дотянуть ползунок вправо (больше 95%)
                     if (progress >= 95) {
                         seekBar.setProgress(100);
-                        seekBar.setTag(COLOR_ACTIVE); // Запоминаем состояние в Tag
+                        seekBar.setTag(COLOR_ACTIVE);
                         setSliderTrackColor(seekBar, COLOR_ACTIVE);
-                        startVoiceCommunication("Room_One"); // ВХОД В КОМНАТУ
+
+                        // ШАГ 1: Фоновая посылка пакета вызова перед запуском аудиопотока
+                        String target = currentLoggedInRole.equals("Владимир") ? "Галина" : "Владимир";
+                        sendCallPacket(target);
+
+                        startVoiceCommunication("Room_One");
                     } else {
-                        // Если не дотянул — сбрасываем на ноль
                         seekBar.setProgress(0);
                         setSliderTrackColor(seekBar, COLOR_NEUTRAL);
                     }
@@ -221,7 +214,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // НАСТРОЙКА СЛАЙДЕРА №2 (СЕРГЕЙ)
+        // НАСТРОЙКА СЛАЙДЕРА №2
         seekContactTwo.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {}
@@ -240,7 +233,7 @@ public class MainActivity extends AppCompatActivity {
                         seekBar.setTag(COLOR_NEUTRAL);
                         setSliderTrackColor(seekBar, COLOR_NEUTRAL);
                         sendExitCommandToServer(dos);
-                        stopAudio(); // ВЫХОД ИЗ КОМНАТЫ
+                        stopAudio();
                         Log.d("AUDIO2", "Свайп влево: Вышли из комнаты 1");
                     } else {
                         seekBar.setProgress(100);
@@ -250,7 +243,12 @@ public class MainActivity extends AppCompatActivity {
                         seekBar.setProgress(100);
                         seekBar.setTag(COLOR_ACTIVE);
                         setSliderTrackColor(seekBar, COLOR_ACTIVE);
-                        startVoiceCommunication("Room_One"); // ВХОД В КОМНАТУ
+
+                        // ШАГ 1: Фоновая посылка пакета вызова перед запуском аудиопотока
+                        String target = currentLoggedInRole.equals("Сергей") ? "Галина" : "Сергей";
+                        sendCallPacket(target);
+
+                        startVoiceCommunication("Room_One");
                     } else {
                         seekBar.setProgress(0);
                         setSliderTrackColor(seekBar, COLOR_NEUTRAL);
@@ -259,7 +257,6 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // В самый конец метода setupIntercomUI:
         setSliderTrackColor(seekContactOne, COLOR_NEUTRAL);
         setSliderTrackColor(seekContactTwo, COLOR_NEUTRAL);
     }
@@ -355,20 +352,16 @@ public class MainActivity extends AppCompatActivity {
 
                 audioStarted = false;
 
-                // ГЛАВНЫЙ ЦИКЛ ПРИЕМА СЕТЕВЫХ ПАКЕТОВ
                 while (isSfxRunning && dis != null) {
                     int msgType = dis.readUnsignedShort();
                     int msgLen = dis.readInt();
 
-                    // Читаем тело пакета ОДИН раз строго здесь для всех типов пакетов
                     byte[] msgBody = new byte[msgLen];
                     dis.readFully(msgBody);
 
-                    // Обертка безопасности внутри цикла, чтобы ошибка в одном пакете не ломала всё приложение
                     try {
-                        if (msgType == 0) { // Инициализация
+                        if (msgType == 0) {
                             String role = currentLoggedInRole;
-
                             Log.d("AUDIO2", "MainActivity считывает роль для отправки Authenticate: " + role);
                             String username;
                             switch (role) {
@@ -376,8 +369,6 @@ public class MainActivity extends AppCompatActivity {
                                 case "Галина": username = "Galina"; break;
                                 case "Сергей": username = "Sergey"; break;
                                 default:
-                                    // Если имя еще не настроено, создаем уникальное имя на основе ID устройства,
-                                    // чтобы телефоны не выбивали друг друга с сервера!
                                     String androidId = android.provider.Settings.Secure.getString(
                                             getContentResolver(), android.provider.Settings.Secure.ANDROID_ID
                                     );
@@ -418,18 +409,47 @@ public class MainActivity extends AppCompatActivity {
                             }
                             Log.d("AUDIO2", "Валидный пакет Authenticate отправлен.");
                         }
-                        else if (msgType == 11) { // TextMessage (Обработка автовыхода)
+                        else if (msgType == 9) { // Текстовое сообщение во время активного звонка
                             try {
-                                String incomingText = new String(msgBody, "UTF-8");
+                                int idx = 0;
+                                String incomingText = "";
+                                while (idx < msgBody.length) {
+                                    int key = msgBody[idx++] & 0xFF;
+                                    int wireType = key & 0x07;
+                                    int tag = key >> 3;
+                                    if (wireType == 0) {
+                                        while ((msgBody[idx++] & 0x80) != 0) {}
+                                    } else if (wireType == 2) {
+                                        int len = 0;
+                                        int shift = 0;
+                                        while (true) {
+                                            int b = msgBody[idx++] & 0xFF;
+                                            len |= (b & 0x7F) << shift;
+                                            if ((b & 0x80) == 0) break;
+                                            shift += 7;
+                                        }
+                                        if (tag == 4) {
+                                            if (idx + len <= msgBody.length) {
+                                                incomingText = new String(msgBody, idx, len, "UTF-8");
+                                            }
+                                            break;
+                                        } else {
+                                            idx += len;
+                                        }
+                                    } else {
+                                        break;
+                                    }
+                                }
+
                                 if (incomingText.contains("COMMAND_EXIT")) {
-                                    Log.d("AUDIO2", "Получена команда автовыхода от собеседника!");
-                                    stopAudio(); // Принудительно гасим связь
+                                    Log.d("AUDIO2", "Получена команда автовыхода от собеседника через чистый Protobuf!");
+                                    stopAudio();
                                 }
                             } catch (Exception e) {
-                                Log.e("AUDIO2", "Ошибка разбора текстового пакета", e);
+                                Log.e("AUDIO2", "Ошибка разбора текстового пакета типа 9 в Activity", e);
                             }
                         }
-                        else if (msgType == 13) { // Ping
+                        else if (msgType == 13) {
                             synchronized (dos) {
                                 dos.writeShort(13);
                                 dos.writeInt(msgLen);
@@ -437,7 +457,7 @@ public class MainActivity extends AppCompatActivity {
                                 dos.flush();
                             }
                         }
-                        else if (msgType == 15) { // CryptSetup
+                        else if (msgType == 15) {
                             byte[] keyReply = new byte[32];
                             Arrays.fill(keyReply, (byte) 0);
                             synchronized (dos) {
@@ -447,10 +467,10 @@ public class MainActivity extends AppCompatActivity {
                                 dos.flush();
                             }
                         }
-                        else if (msgType == 1) { // Аудиопоток
+                        else if (msgType == 1) {
                             handleIncomingAudio(msgBody);
                         }
-                        else if (msgType == 5 && !audioStarted) { // ServerSync
+                        else if (msgType == 5 && !audioStarted) {
                             try {
                                 if (msgBody.length > 1 && msgBody[0] == 0x08) {
                                     int[] off = {1};
@@ -545,7 +565,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // Метод генерации персонального декодера под каждого спикера (УБИРАЕТ ЗАДЕРЖКУ!)
     private MediaCodec getOrCreateDecoderForSession(int session) {
         if (decoderPool.containsKey(session)) {
             return decoderPool.get(session);
@@ -576,8 +595,6 @@ public class MainActivity extends AppCompatActivity {
     private void handleIncomingAudio(byte[] msgBody) {
         try {
             diagnosticCounter++;
-            boolean logThis = (diagnosticCounter % 100 == 0);
-
             int[] off = {0};
             int header = msgBody[off[0]++] & 0xFF;
 
@@ -585,10 +602,8 @@ public class MainActivity extends AppCompatActivity {
             int seq = readMumbleVarIntFromBytes(msgBody, off);
             int opusLen = readMumbleVarIntFromBytes(msgBody, off);
 
-            // Игнорируем собственный голос, чтобы не забивать аудиотракт эхом!
             if (session == mySession) return;
 
-            // Получаем или создаем изолированный декодер для конкретного человека
             MediaCodec currentDecoder = getOrCreateDecoderForSession(session);
             if (currentDecoder == null) return;
 
@@ -597,7 +612,7 @@ public class MainActivity extends AppCompatActivity {
             byte[] opusFrame = new byte[opusLen];
             System.arraycopy(msgBody, off[0], opusFrame, 0, opusLen);
 
-            int inputBufferIndex = currentDecoder.dequeueInputBuffer(0); // Опрашиваем мгновенно, без задержки (0 мс)
+            int inputBufferIndex = currentDecoder.dequeueInputBuffer(0);
             if (inputBufferIndex >= 0) {
                 ByteBuffer inputBuffer = currentDecoder.getInputBuffer(inputBufferIndex);
                 inputBuffer.clear();
@@ -606,7 +621,7 @@ public class MainActivity extends AppCompatActivity {
             }
 
             MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
-            int outputBufferIndex = currentDecoder.dequeueOutputBuffer(bufferInfo, 0); // Мгновенный опрос
+            int outputBufferIndex = currentDecoder.dequeueOutputBuffer(bufferInfo, 0);
 
             while (outputBufferIndex >= 0 || outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                 if (outputBufferIndex >= 0) {
@@ -618,7 +633,6 @@ public class MainActivity extends AppCompatActivity {
                         outputBuffer.get(pcmFrame);
 
                         if (audioTrack != null) {
-                            // Если буфер накопил старье (задержка звука), сбрасываем хвост перед выводом
                             if (audioTrack.getPlayState() != AudioTrack.PLAYSTATE_PLAYING) {
                                 audioTrack.play();
                             }
@@ -639,7 +653,6 @@ public class MainActivity extends AppCompatActivity {
     private void startAudioSendingLoop(final DataOutputStream dos, String roomName) {
         Log.d("AUDIO2", "Audio sending loop STARTED");
         new Thread(() -> {
-            // Для 48000Гц 16бит моно, фрейм 20мс — это ровно 960 шортов (1920 байт)
             int frameSizeInBytes = 1920;
             byte[] audioBuffer = new byte[frameSizeInBytes];
             MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
@@ -661,7 +674,7 @@ public class MainActivity extends AppCompatActivity {
 
                     if (opusEncoder == null) continue;
 
-                    int inputBufferIndex = opusEncoder.dequeueInputBuffer(0); // Опрос 0мс снижает лаг передачи
+                    int inputBufferIndex = opusEncoder.dequeueInputBuffer(0);
                     if (inputBufferIndex >= 0) {
                         ByteBuffer inputBuffer = opusEncoder.getInputBuffer(inputBufferIndex);
                         inputBuffer.clear();
@@ -676,7 +689,7 @@ public class MainActivity extends AppCompatActivity {
                         outputBuffer.get(opusData);
 
                         ByteArrayOutputStream pcmPayloadOs = new ByteArrayOutputStream();
-                        pcmPayloadOs.write(0x80); // Тип кодека (Opus)
+                        pcmPayloadOs.write(0x80);
 
                         writeVarIntLongStream(pcmPayloadOs, (long) (sequenceNumber++));
                         writeVarIntLongStream(pcmPayloadOs, (long) (opusData.length));
@@ -742,7 +755,6 @@ public class MainActivity extends AppCompatActivity {
                 opusEncoder = null;
             }
 
-            // Освобождаем ВЕСЬ пул динамических декодеров спикеров
             for (int sessionKey : decoderPool.keySet()) {
                 MediaCodec dec = decoderPool.get(sessionKey);
                 if (dec != null) {
@@ -765,12 +777,12 @@ public class MainActivity extends AppCompatActivity {
             runOnUiThread(() -> {
                 if (seekContactOne != null) {
                     seekContactOne.setProgress(0);
-                    seekContactOne.setTag(COLOR_NEUTRAL); // СБРОС ТЭГА
+                    seekContactOne.setTag(COLOR_NEUTRAL);
                     setSliderTrackColor(seekContactOne, COLOR_NEUTRAL);
                 }
                 if (seekContactTwo != null) {
                     seekContactTwo.setProgress(0);
-                    seekContactTwo.setTag(COLOR_NEUTRAL); // СБРОС ТЭГА
+                    seekContactTwo.setTag(COLOR_NEUTRAL);
                     setSliderTrackColor(seekContactTwo, COLOR_NEUTRAL);
                 }
             });
@@ -779,8 +791,86 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // НОВЫЙ МЕТОД: Отправка короткого фонового текстового пакета вызова [CALL]
+    private void sendCallPacket(String targetName) {
+        new Thread(() -> {
+            try {
+                Log.d("AUDIO2", "=== ВЫЗОВ: Начало отправки для " + targetName + " ===");
+
+                TrustManager[] trustAllCerts = new TrustManager[]{
+                        new X509TrustManager() {
+                            public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+                            public void checkClientTrusted(X509Certificate[] certs, String authType) {}
+                            public void checkServerTrusted(X509Certificate[] certs, String authType) {}
+                        }
+                };
+                SSLContext sc = SSLContext.getInstance("TLS");
+                sc.init(null, trustAllCerts, new java.security.SecureRandom());
+                SSLSocket callSocket = (SSLSocket) sc.getSocketFactory().createSocket(SERVER_HOST, SERVER_PORT);
+                callSocket.setEnabledProtocols(new String[]{"TLSv1.2", "TLSv1.3"});
+                callSocket.startHandshake();
+
+                DataOutputStream callDos = new DataOutputStream(callSocket.getOutputStream());
+                DataInputStream callDis = new DataInputStream(callSocket.getInputStream());
+
+                // 1. Отправка пакета Version
+                ByteArrayOutputStream vOs = new ByteArrayOutputStream();
+                vOs.write(0x08); writeVarIntStream(vOs, 66047);
+                vOs.write(0x28); writeVarIntLongStream(vOs, 281496451547136L);
+                vOs.write(0x12); byte[] relBytes = "1.5.0".getBytes("UTF-8");
+                writeVarIntStream(vOs, relBytes.length); vOs.write(relBytes);
+                vOs.write(0x1A); byte[] osBytes = "Win32".getBytes("UTF-8");
+                writeVarIntStream(vOs, osBytes.length); vOs.write(osBytes);
+                vOs.write(0x22); byte[] osv = "Android".getBytes("UTF-8");
+                writeVarIntStream(vOs, osv.length); vOs.write(osv);
+                byte[] verBody = vOs.toByteArray();
+                callDos.writeShort(0); callDos.writeInt(verBody.length); callDos.write(verBody); callDos.flush();
+
+                // 2. Отправка пакета Authenticate с суффиксом вызова
+                String callUser = currentLoggedInRole + "_Call";
+                String serverPassword = "PectinWorldIntercom1970";
+                ByteArrayOutputStream aOs = new ByteArrayOutputStream();
+                aOs.write(0x0A); byte[] uBytes = callUser.getBytes("UTF-8"); writeVarIntStream(aOs, uBytes.length); aOs.write(uBytes);
+                aOs.write(0x12); byte[] pBytes = serverPassword.getBytes("UTF-8"); writeVarIntStream(aOs, pBytes.length); aOs.write(pBytes);
+                aOs.write(0x1A); byte[] tBytes = serverPassword.getBytes("UTF-8"); writeVarIntStream(aOs, tBytes.length); aOs.write(tBytes);
+                byte[] authBody = aOs.toByteArray();
+                callDos.writeShort(2); callDos.writeInt(authBody.length); callDos.write(authBody); callDos.flush();
+                callDos.writeShort(3); callDos.writeInt(0); callDos.flush();
+
+                // Ожидаем ServerSync (Тип 5)
+                while (true) {
+                    int msgType = callDis.readUnsignedShort();
+                    int msgLength = callDis.readInt();
+                    byte[] msgData = new byte[msgLength];
+                    callDis.readFully(msgData);
+                    if (msgType == 5) break;
+                }
+
+                // 3. Отправка Protobuf TextMessage (Тип 11) с командой старта вызова
+                String callMessage = "COMMAND_CALL_START:" + currentLoggedInRole;
+                byte[] msgStringBytes = callMessage.getBytes("UTF-8");
+
+                ByteArrayOutputStream txOs = new ByteArrayOutputStream();
+                txOs.write(0x18); txOs.write(1); // Поле №3: channel_id (ID комнаты = 1)
+                txOs.write(0x2A); txOs.write(msgStringBytes.length); txOs.write(msgStringBytes); // Поле №5: message
+                byte[] txBody = txOs.toByteArray();
+
+                callDos.writeShort(11);
+                callDos.writeInt(txBody.length);
+                callDos.write(txBody);
+                callDos.flush();
+
+                callSocket.close();
+                Log.d("AUDIO2", "=== ВЫЗОВ: Пакет '" + callMessage + "' успешно отправлен ===");
+
+            } catch (Exception e) {
+                Log.e("AUDIO2", "!!! ВЫЗОВ: Ошибка отправки: " + e.getMessage());
+            }
+        }).start();
+    }
+
     private void sendExitCommandToServer(final DataOutputStream finalDos) {
-        if (finalDos == null) return; // Проверяем переданный поток
+        if (finalDos == null) return;
 
         new Thread(() -> {
             try {
@@ -788,21 +878,13 @@ public class MainActivity extends AppCompatActivity {
                 byte[] msgBytes = msg.getBytes("UTF-8");
 
                 ByteArrayOutputStream txOs = new ByteArrayOutputStream();
-
-                // Поле №3: channel_id (ID комнаты = 1)
-                txOs.write(0x18);
-                txOs.write(1);
-
-                // Поле №5: message
-                txOs.write(0x2A);
-                txOs.write(msgBytes.length);
-                txOs.write(msgBytes);
+                txOs.write(0x18); txOs.write(1);
+                txOs.write(0x2A); txOs.write(msgBytes.length); txOs.write(msgBytes);
 
                 byte[] txBody = txOs.toByteArray();
 
-                // Синхронизируемся по переданному потоку
                 synchronized (finalDos) {
-                    finalDos.writeShort(11); // TextMessage
+                    finalDos.writeShort(11);
                     finalDos.writeInt(txBody.length);
                     finalDos.write(txBody);
                     finalDos.flush();
@@ -887,7 +969,6 @@ public class MainActivity extends AppCompatActivity {
 
     private void setSliderTrackColor(SeekBar seekBar, int color) {
         if (seekBar != null && seekBar.getProgressDrawable() != null) {
-            // Красим подложку (LayerDrawable / Shape) в нужный нам цвет
             seekBar.getProgressDrawable().setColorFilter(color, android.graphics.PorterDuff.Mode.SRC_IN);
         }
     }

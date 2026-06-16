@@ -18,7 +18,7 @@ import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import java.security.cert.X509Certificate;
-import java.io.ByteArrayOutputStream; // ВОТ ЭТОГО НЕ ХВАТАЛО
+import java.io.ByteArrayOutputStream;
 import java.util.Arrays;
 
 public class IntercomService extends Service {
@@ -32,8 +32,7 @@ public class IntercomService extends Service {
 
     private String cachedUserRole = "Unknown";
 
-    // Константы сервера (перенеси свои актуальные данные сюда)
-    private static final String SERVER_HOST = "90.171.130.20"; // Твой IP сервера
+    private static final String SERVER_HOST = "90.171.130.20";
     private static final int SERVER_PORT = 64738;
 
     @Override
@@ -49,22 +48,18 @@ public class IntercomService extends Service {
         if (intent != null && intent.hasExtra("USER_ROLE_EXTRA")) {
             cachedUserRole = intent.getStringExtra("USER_ROLE_EXTRA");
         } else {
-            // На всякий случай подстраховка: если интент пустой (система перезапустила сервис),
-            // читаем напрямую из ПРАВИЛЬНОГО файла настроек MainActivity
             android.content.SharedPreferences servicePrefs = getSharedPreferences("PectinWorldPrefs", MODE_PRIVATE);
             cachedUserRole = servicePrefs.getString("UserRole", "Unknown");
         }
 
         try {
-            // Показываем постоянное уведомление, переводя сервис в статус Foreground
             Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
                     .setContentTitle("Интерком PectinWorld")
                     .setContentText("Приложение активно и ожидает вызовы")
-                    .setSmallIcon(android.R.drawable.stat_sys_phone_call) // Системная иконка трубки
+                    .setSmallIcon(android.R.drawable.stat_sys_phone_call)
                     .setPriority(NotificationCompat.PRIORITY_LOW)
                     .build();
 
-            // Запуск в режиме переднего плана
             startForeground(101, notification);
             Log.d(TAG, "startForeground успешно выполнен");
 
@@ -74,7 +69,6 @@ public class IntercomService extends Service {
             }
 
         } catch (Exception e) {
-            // ЕСЛИ ТУТ ИДЕТ СБОЙ — МЫ УВИДИМ ЕГО В LOGCAT КРАСНЫМ ЦВЕТОМ!
             Log.e(TAG, "КРИТИЧЕСКАЯ ОШИБКА ИНИЦИАЛИЗАЦИИ СЕРВИСА В onStartCommand", e);
         }
 
@@ -83,15 +77,13 @@ public class IntercomService extends Service {
 
     private void startNetworkLoop() {
         new Thread(() -> {
-            // Поток пинга запускаем ОДИН раз на всю жизнь сервиса
             new Thread(() -> {
                 while (isRunning) {
                     try {
                         Thread.sleep(15000);
-                        // Проверяем, что сокет не просто существует, но и физически открыт
                         if (dos != null && tcpSocket != null && !tcpSocket.isClosed() && tcpSocket.isConnected()) {
                             synchronized (dos) {
-                                dos.writeShort(13); // Ping
+                                dos.writeShort(13);
                                 dos.writeInt(0);
                                 dos.flush();
                             }
@@ -105,7 +97,6 @@ public class IntercomService extends Service {
                 }
             }).start();
 
-            // ЦИКЛ АВТОПОДДКЛЮЧЕНИЯ: если вылетит ошибка, мы вернемся сюда и подключимся заново!
             while (isRunning) {
                 try {
                     Log.d(TAG, "Подключение к серверу в фоновом режиме...");
@@ -126,24 +117,12 @@ public class IntercomService extends Service {
                     dos = new DataOutputStream(tcpSocket.getOutputStream());
                     dis = new DataInputStream(tcpSocket.getInputStream());
 
-                    // Отправка пакета Version (Тип 0)
                     ByteArrayOutputStream vOs = new ByteArrayOutputStream();
-                    vOs.write(0x08);
-                    writeVarIntStream(vOs, 66047);
-                    vOs.write(0x28);
-                    writeVarIntLongStream(vOs, 281496451547136L);
-                    vOs.write(0x12);
-                    byte[] relBytes = "1.5.0".getBytes("UTF-8");
-                    writeVarIntStream(vOs, relBytes.length);
-                    vOs.write(relBytes);
-                    vOs.write(0x1A);
-                    byte[] osBytes = "Win32".getBytes("UTF-8");
-                    writeVarIntStream(vOs, osBytes.length);
-                    vOs.write(osBytes);
-                    vOs.write(0x22);
-                    byte[] osv = "Android".getBytes("UTF-8");
-                    writeVarIntStream(vOs, osv.length);
-                    vOs.write(osv);
+                    vOs.write(0x08); writeVarIntStream(vOs, 66047);
+                    vOs.write(0x28); writeVarIntLongStream(vOs, 281496451547136L);
+                    vOs.write(0x12); byte[] relBytes = "1.5.0".getBytes("UTF-8"); writeVarIntStream(vOs, relBytes.length); vOs.write(relBytes);
+                    vOs.write(0x1A); byte[] osBytes = "Win32".getBytes("UTF-8"); writeVarIntStream(vOs, osBytes.length); vOs.write(osBytes);
+                    vOs.write(0x22); byte[] osv = "Android".getBytes("UTF-8"); writeVarIntStream(vOs, osv.length); vOs.write(osv);
                     byte[] verBody = vOs.toByteArray();
 
                     dos.writeShort(0);
@@ -153,7 +132,6 @@ public class IntercomService extends Service {
 
                     Log.d(TAG, "Пакет Version отправлен. Вход в цикл ожидания пакетов...");
 
-                    // ВНУТРЕННИЙ ЦИКЛ ЧТЕНИЯ СЛУШАЕТ СЕРВЕР ПОКА СОКЕТ ЖИВ
                     while (isRunning && tcpSocket != null && !tcpSocket.isClosed()) {
                         int msgType = dis.readUnsignedShort();
                         int msgLen = dis.readInt();
@@ -162,7 +140,7 @@ public class IntercomService extends Service {
                         dis.readFully(msgBody);
 
                         try {
-                            if (msgType == 0) { // Authenticate
+                            if (msgType == 0) {
                                 String username;
                                 switch (cachedUserRole) {
                                     case "Владимир": username = "Vladimir_Service"; break;
@@ -174,20 +152,9 @@ public class IntercomService extends Service {
                                 String serverPassword = "PectinWorldIntercom1970";
                                 ByteArrayOutputStream aOs = new ByteArrayOutputStream();
 
-                                aOs.write(0x0A);
-                                byte[] uBytes = username.getBytes("UTF-8");
-                                writeVarIntStream(aOs, uBytes.length);
-                                aOs.write(uBytes);
-
-                                aOs.write(0x12);
-                                byte[] pBytes = serverPassword.getBytes("UTF-8");
-                                writeVarIntStream(aOs, pBytes.length);
-                                aOs.write(pBytes);
-
-                                aOs.write(0x1A);
-                                byte[] tBytes = serverPassword.getBytes("UTF-8");
-                                writeVarIntStream(aOs, tBytes.length);
-                                aOs.write(tBytes);
+                                aOs.write(0x0A); byte[] uBytes = username.getBytes("UTF-8"); writeVarIntStream(aOs, uBytes.length); aOs.write(uBytes);
+                                aOs.write(0x12); byte[] pBytes = serverPassword.getBytes("UTF-8"); writeVarIntStream(aOs, pBytes.length); aOs.write(pBytes);
+                                aOs.write(0x1A); byte[] tBytes = serverPassword.getBytes("UTF-8"); writeVarIntStream(aOs, tBytes.length); aOs.write(tBytes);
 
                                 byte[] authBody = aOs.toByteArray();
 
@@ -203,23 +170,7 @@ public class IntercomService extends Service {
                                 }
                                 Log.d(TAG, "Валидный пакет Authenticate отправлен из сервиса для: " + username);
                             }
-                            else if (msgType == 11) { // TextMessage (Команды управления)
-                                String incomingText = new String(msgBody, "UTF-8");
-                                if (incomingText.contains("COMMAND_CALL_START")) {
-                                    String callerName = "Галина";
-                                    if (incomingText.contains(":")) callerName = incomingText.split(":")[1];
-                                    Intent callIntent = new Intent("INTERCOM_EVENT");
-                                    callIntent.putExtra("action", "INCOMING_CALL");
-                                    callIntent.putExtra("caller", callerName);
-                                    sendBroadcast(callIntent);
-                                }
-                                else if (incomingText.contains("COMMAND_EXIT")) {
-                                    Intent exitIntent = new Intent("INTERCOM_EVENT");
-                                    exitIntent.putExtra("action", "STOP_AUDIO");
-                                    sendBroadcast(exitIntent);
-                                }
-                            }
-                            else if (msgType == 13) { // Входящий Ping
+                            else if (msgType == 13) {
                                 synchronized (dos) {
                                     dos.writeShort(13);
                                     dos.writeInt(msgLen);
@@ -227,7 +178,7 @@ public class IntercomService extends Service {
                                     dos.flush();
                                 }
                             }
-                            else if (msgType == 15) { // CryptSetup
+                            else if (msgType == 15) {
                                 byte[] keyReply = new byte[32];
                                 Arrays.fill(keyReply, (byte) 0);
                                 synchronized (dos) {
@@ -237,16 +188,85 @@ public class IntercomService extends Service {
                                     dos.flush();
                                 }
                             }
-                            else if (msgType == 1) { // Аудио
+                            else if (msgType == 1) {
                                 Intent audioIntent = new Intent("INTERCOM_AUDIO");
                                 audioIntent.putExtra("body", msgBody);
                                 sendBroadcast(audioIntent);
                             }
-                            else if (msgType == 5) { // ServerSync
+                            else if (msgType == 5) {
                                 Log.d(TAG, "=== ServerSync === Синхронизация успешна.");
                                 Intent syncIntent = new Intent("INTERCOM_EVENT");
                                 syncIntent.putExtra("action", "SERVER_CONNECTED");
                                 sendBroadcast(syncIntent);
+                            }
+                            else if (msgType == 9) { // Текстовое сообщение (Mumble TextMessage)
+                                Log.d(TAG, "=== СЕРВИС: Получен пакет TextMessage (Тип 9) ===");
+                                String incomingText = "";
+                                try {
+                                    int idx = 0;
+                                    // Разбираем Protobuf-пакет TextMessage вручную
+                                    while (idx < msgBody.length) {
+                                        int key = msgBody[idx++] & 0xFF;
+                                        int wireType = key & 0x07;
+                                        int tag = key >> 3;
+
+                                        if (wireType == 0) { // Varint
+                                            while ((msgBody[idx++] & 0x80) != 0) {}
+                                        } else if (wireType == 2) { // Length-delimited (строки / вложенные сообщения)
+                                            int len = 0;
+                                            int shift = 0;
+                                            while (true) {
+                                                int b = msgBody[idx++] & 0xFF;
+                                                len |= (b & 0x7F) << shift;
+                                                if ((b & 0x80) == 0) break;
+                                                shift += 7;
+                                            }
+
+                                            // В Mumble TextMessage под тегом 4 (Tag 4) идет текст самого сообщения
+                                            if (tag == 4) {
+                                                if (idx + len <= msgBody.length) {
+                                                    incomingText = new String(msgBody, idx, len, "UTF-8");
+                                                }
+                                                break; // Текст сообщения найден, выходим
+                                            } else {
+                                                idx += len; // Пропускаем другие поля (списки сессий, каналов и т.д.)
+                                            }
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                } catch (Exception e) {
+                                    Log.e(TAG, "Ошибка безопасного парсинга Protobuf пакета 9", e);
+                                }
+
+                                Log.d(TAG, "!!! СЕРВИС ОЧИСТИЛ ТЕКСТ: '" + incomingText + "'");
+
+                                if (incomingText.contains("[CALL]:")) {
+                                    String callerName = "Владимир";
+                                    try {
+                                        if (incomingText.contains(":")) {
+                                            String[] parts = incomingText.split(":");
+                                            if (parts.length > 1) {
+                                                callerName = parts[1].trim();
+                                            }
+                                        }
+                                    } catch (Exception e) {
+                                        Log.e(TAG, "Ошибка вытаскивания имени из CALL", e);
+                                    }
+
+                                    Log.d(TAG, "!!! СЕРВИС ИНТЕГРИРУЕТ ВХОДЯЩИЙ ВЫЗОВ ОТ: " + callerName + " !!!");
+
+                                    Intent callIntent = new Intent("INTERCOM_EVENT");
+                                    callIntent.putExtra("action", "INCOMING_CALL");
+                                    callIntent.putExtra("caller", callerName);
+                                    sendBroadcast(callIntent);
+
+                                } else if (incomingText.contains("COMMAND_EXIT")) {
+                                    Log.d(TAG, "СЕРВИС: Получена команда завершения связи.");
+                                    Intent exitIntent = new Intent("INTERCOM_EVENT");
+                                    exitIntent.putExtra("action", "STOP_AUDIO");
+                                    sendBroadcast(exitIntent);
+                                }
                             }
                         } catch (Exception internalPackEx) {
                             Log.e(TAG, "Ошибка обработки пакета: " + internalPackEx.getMessage());
@@ -256,13 +276,11 @@ public class IntercomService extends Service {
                 } catch (Exception e) {
                     Log.e(TAG, "Соединение разорвано или ошибка сокета: " + e.getMessage());
                 } finally {
-                    // Если вышли из цикла чтения (сервер закрыл сокет), аккуратно подчищаем старые стримы
                     try { if (tcpSocket != null) tcpSocket.close(); } catch (Exception e) {}
                     dos = null;
                     dis = null;
                 }
 
-                // ПАУЗА ПЕРЕД СЛЕДУЮЩЕЙ ПОПЫТКОЙ ПОДКЛЮЧЕНИЯ (чтобы не спамить сервер в случае отсутствия сети)
                 if (isRunning) {
                     try {
                         Log.d(TAG, "Ожидание 5 секунд перед восстановлением связи...");
@@ -319,7 +337,6 @@ public class IntercomService extends Service {
     public void onDestroy() {
         super.onDestroy();
         isRunning = false;
-        // Закрываем сокеты при уничтожении сервиса
         try { if (tcpSocket != null) tcpSocket.close(); } catch (Exception e) {}
         Log.d(TAG, "Сервис уничтожен");
     }
