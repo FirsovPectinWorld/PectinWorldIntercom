@@ -120,6 +120,93 @@ public class MainActivity extends AppCompatActivity {
             Log.d("AUDIO2", "Сервис не запущен: ожидаем авторизации пользователя.");
             loginButton.setOnClickListener(v -> handleLogin());
         }
+
+        Log.d("INTERCOM_MAIN", "==> [ЛОГ ACTIVITY] onCreate вызван. Проверяем входящий Intent...");
+        if (getIntent() != null) {
+            String action = getIntent().getStringExtra("LAUNCH_ACTION");
+            Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] onCreate Intent Action: " + action);
+            if ("INCOMING_CALL".equals(action)) {
+                String caller = getIntent().getStringExtra("CALLER_NAME");
+                Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] Найдена команда звонка в onCreate от: " + caller);
+                handleIncomingCallFromIntent(caller);
+            }
+        } else {
+            Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] onCreate Intent равен null.");
+        }
+
+        // Позволяет Activity открываться поверх заблокированного экрана
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true);
+            setTurnScreenOn(true);
+        } else {
+            getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                    | android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                    | android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
+
+
+        // АВТОМАТИЧЕСКИЙ ЗАПРОС РАЗРЕШЕНИЯ НА УВЕДОМЛЕНИЯ (Защита от сброса Android Studio)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) { // Android 13+
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+
+                Log.w("INTERCOM_MAIN", "Разрешение POST_NOTIFICATIONS отсутствует. Запрашиваем...");
+                ActivityCompat.requestPermissions(this,
+                        new String[]{Manifest.permission.POST_NOTIFICATIONS}, 101);
+            } else {
+                Log.d("INTERCOM_MAIN", "Разрешение POST_NOTIFICATIONS уже есть.");
+            }
+        }
+
+
+
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        Log.d("INTERCOM_MAIN", "==> [ЛОГ ACTIVITY] onNewIntent вызван! Приложение было свернуто, но проснулось.");
+        if (intent != null) {
+            String action = intent.getStringExtra("LAUNCH_ACTION");
+            Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] onNewIntent Action: " + action);
+            if ("INCOMING_CALL".equals(action)) {
+                String caller = intent.getStringExtra("CALLER_NAME");
+                Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] Найдена команда звонка в onNewIntent от: " + caller);
+                handleIncomingCallFromIntent(caller);
+            }
+        }
+    }
+
+    private void handleIncomingCallFromIntent(String callerName) {
+        Log.d("INTERCOM_MAIN", "==> [ЛОГ ACTIVITY] Точка handleIncomingCallFromIntent ВЫПОЛНЯЕТСЯ для: " + callerName);
+
+        if (welcomeText != null) {
+            welcomeText.setText("🚨 ВХОДЯЩИЙ ВЫЗОВ ОТ: " + callerName.toUpperCase());
+            Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] Текст во welcomeText успешно изменен.");
+        } else {
+            Log.e("INTERCOM_MAIN", "[ЛОГ ACTIVITY] ОШИБКА: welcomeText равен null!");
+        }
+
+        try {
+            if (callerName.equalsIgnoreCase("Галина") || callerName.toLowerCase().contains("galina")) {
+                if (seekContactOne != null) {
+                    seekContactOne.getProgressDrawable().setColorFilter(COLOR_INCOMING, android.graphics.PorterDuff.Mode.SRC_IN);
+                    seekContactOne.getThumb().setColorFilter(COLOR_INCOMING, android.graphics.PorterDuff.Mode.SRC_IN);
+                    Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] Слайдер 1 перекрашен в КРАСНЫЙ.");
+                }
+            } else if (callerName.equalsIgnoreCase("Сергей") || callerName.toLowerCase().contains("sergey")) {
+                if (seekContactTwo != null) {
+                    seekContactTwo.getProgressDrawable().setColorFilter(COLOR_INCOMING, android.graphics.PorterDuff.Mode.SRC_IN);
+                    seekContactTwo.getThumb().setColorFilter(COLOR_INCOMING, android.graphics.PorterDuff.Mode.SRC_IN);
+                    Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] Слайдер 2 перекрашен в КРАСНЫЙ.");
+                }
+            }
+        } catch (Exception e) {
+            Log.e("INTERCOM_MAIN", "[ЛОГ ACTIVITY] Ошибка изменения цветов слайдеров", e);
+        }
+
+        Toast.makeText(this, "Входящий вызов: " + callerName, Toast.LENGTH_LONG).show();
     }
 
     private void handleLogin() {
@@ -428,21 +515,22 @@ public class MainActivity extends AppCompatActivity {
                                             if ((b & 0x80) == 0) break;
                                             shift += 7;
                                         }
-                                        if (tag == 4) {
-                                            if (idx + len <= msgBody.length) {
-                                                incomingText = new String(msgBody, idx, len, "UTF-8");
+
+                                        if (idx + len <= msgBody.length) {
+                                            String extractedStr = new String(msgBody, idx, len, "UTF-8");
+                                            // Если в любом теге прилетела команда выхода — фиксируем её
+                                            if (extractedStr.contains("COMMAND_EXIT")) {
+                                                incomingText = extractedStr;
                                             }
-                                            break;
-                                        } else {
-                                            idx += len;
                                         }
+                                        idx += len;
                                     } else {
                                         break;
                                     }
                                 }
 
                                 if (incomingText.contains("COMMAND_EXIT")) {
-                                    Log.d("AUDIO2", "Получена команда автовыхода от собеседника через чистый Protobuf!");
+                                    Log.d("AUDIO2", "Получена команда автовыхода от собеседника!");
                                     stopAudio();
                                 }
                             } catch (Exception e) {
@@ -846,22 +934,29 @@ public class MainActivity extends AppCompatActivity {
                     if (msgType == 5) break;
                 }
 
-                // 3. Отправка Protobuf TextMessage (Тип 11) с командой старта вызова
-                String callMessage = "COMMAND_CALL_START:" + currentLoggedInRole;
+// 3. Отправка Protobuf TextMessage (Тип 11) с адресацией "Кто->Кому"
+                // Пример: "COMMAND_CALL_START:Сергей->Галина"
+                String callMessage = "COMMAND_CALL_START:" + currentLoggedInRole + "->" + targetName;
                 byte[] msgStringBytes = callMessage.getBytes("UTF-8");
 
                 ByteArrayOutputStream txOs = new ByteArrayOutputStream();
                 txOs.write(0x18); txOs.write(1); // Поле №3: channel_id (ID комнаты = 1)
-                txOs.write(0x2A); txOs.write(msgStringBytes.length); txOs.write(msgStringBytes); // Поле №5: message
+
+                // ВНИМАНИЕ: Если длина строки msgStringBytes может превысить 127 байт (в нашем случае нет),
+                // лучше использовать ваш метод writeVarIntStream, но для коротких имен явная запись длины тоже сработает.
+                txOs.write(0x2A);
+                writeVarIntStream(txOs, msgStringBytes.length); // Используем ваш безопасный varint для длины строки
+                txOs.write(msgStringBytes); // Поле №5: message
+
                 byte[] txBody = txOs.toByteArray();
 
-                callDos.writeShort(11);
+                callDos.writeShort(11); // ID типа сообщения TextMessage в протоколе Mumble
                 callDos.writeInt(txBody.length);
                 callDos.write(txBody);
                 callDos.flush();
 
                 callSocket.close();
-                Log.d("AUDIO2", "=== ВЫЗОВ: Пакет '" + callMessage + "' успешно отправлен ===");
+                Log.d("AUDIO2", "=== ВЫЗОВ: Адресный пакет '" + callMessage + "' успешно отправлен ===");
 
             } catch (Exception e) {
                 Log.e("AUDIO2", "!!! ВЫЗОВ: Ошибка отправки: " + e.getMessage());

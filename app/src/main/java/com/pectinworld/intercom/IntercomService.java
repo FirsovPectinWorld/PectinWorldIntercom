@@ -77,6 +77,7 @@ public class IntercomService extends Service {
 
     private void startNetworkLoop() {
         new Thread(() -> {
+            // Отдельный поток для Пинга
             new Thread(() -> {
                 while (isRunning) {
                     try {
@@ -202,9 +203,10 @@ public class IntercomService extends Service {
                             else if (msgType == 9) { // Текстовое сообщение (Mumble TextMessage)
                                 Log.d(TAG, "=== СЕРВИС: Получен пакет TextMessage (Тип 9) ===");
                                 String incomingText = "";
+                                Log.d(TAG, "Размер тела пакета Тип 9: " + msgBody.length + " байт");
+
                                 try {
                                     int idx = 0;
-                                    // Разбираем Protobuf-пакет TextMessage вручную
                                     while (idx < msgBody.length) {
                                         int key = msgBody[idx++] & 0xFF;
                                         int wireType = key & 0x07;
@@ -212,7 +214,7 @@ public class IntercomService extends Service {
 
                                         if (wireType == 0) { // Varint
                                             while ((msgBody[idx++] & 0x80) != 0) {}
-                                        } else if (wireType == 2) { // Length-delimited (строки / вложенные сообщения)
+                                        } else if (wireType == 2) { // Length-delimited (Строки/Массивы)
                                             int len = 0;
                                             int shift = 0;
                                             while (true) {
@@ -222,50 +224,78 @@ public class IntercomService extends Service {
                                                 shift += 7;
                                             }
 
-                                            // В Mumble TextMessage под тегом 4 (Tag 4) идет текст самого сообщения
-                                            if (tag == 4) {
-                                                if (idx + len <= msgBody.length) {
-                                                    incomingText = new String(msgBody, idx, len, "UTF-8");
+                                            if (idx + len <= msgBody.length) {
+                                                // Извлекаем абсолютно любую строку, пришедшую в поле text
+                                                String extractedStr = new String(msgBody, idx, len, "UTF-8").trim();
+                                                Log.d(TAG, "Найден текстовый блок (Тег " + tag + "): '" + extractedStr + "'");
+
+                                                if (!extractedStr.isEmpty()) {
+                                                    incomingText = extractedStr;
                                                 }
-                                                break; // Текст сообщения найден, выходим
-                                            } else {
-                                                idx += len; // Пропускаем другие поля (списки сессий, каналов и т.д.)
                                             }
+                                            idx += len;
+                                        } else if (wireType == 5) { // 32-bit
+                                            idx += 4;
+                                        } else if (wireType == 1) { // 64-bit
+                                            idx += 8;
                                         } else {
                                             break;
                                         }
                                     }
+
                                 } catch (Exception e) {
-                                    Log.e(TAG, "Ошибка безопасного парсинга Protobuf пакета 9", e);
+                                    Log.e(TAG, "Ошибка безопасного извлечения текста из пакета 9", e);
                                 }
 
-                                Log.d(TAG, "!!! СЕРВИС ОЧИСТИЛ ТЕКСТ: '" + incomingText + "'");
+                                Log.d(TAG, "!!! ИТОГОВЫЙ РАСПАРСЕННЫЙ ТЕКСТ ДЛЯ ОБРАБОТКИ: '" + incomingText + "'");
 
-                                if (incomingText.contains("[CALL]:")) {
-                                    String callerName = "Владимир";
-                                    try {
-                                        if (incomingText.contains(":")) {
-                                            String[] parts = incomingText.split(":");
-                                            if (parts.length > 1) {
-                                                callerName = parts[1].trim();
+                                if (!incomingText.isEmpty()) {
+                                    String myRole = (cachedUserRole != null) ? cachedUserRole.trim() : "Unknown";
+
+                                    // 1. АДРЕСНЫЙ ВЫЗОВ (Новый формат)
+                                    if (incomingText.contains("COMMAND_CALL_START:")) {
+                                        String addressData = incomingText.replace("COMMAND_CALL_START:", "").trim();
+
+                                        if (addressData.contains("->")) {
+                                            String[] parts = addressData.split("->");
+                                            String sender = parts[0].trim();   // Кто звонит
+                                            String receiver = parts[1].trim(); // Кому звонят
+
+                                            // Реагирует ТОЛЬКО тот, чья роль совпадает с получателем
+                                            if (myRole.equalsIgnoreCase(receiver)) {
+                                                Log.d(TAG, "!!! МНЕ ЗВОНЯТ! От: " + sender + " Для меня: " + myRole);
+
+                                                Intent callIntent = new Intent("com.pectinworld.intercom.INCOMING_CALL");
+                                                callIntent.putExtra("CALLER_NAME", sender);
+                                                sendBroadcast(callIntent);
+
+                                                showIncomingCallNotification(sender);
+                                                playNotificationSound();
+                                            } else {
+                                                Log.d(TAG, "[ФИЛЬТР АДРЕСА] Звонок от " + sender + " предназначен для " + receiver + ". Я (" + myRole + ") игнорирую.");
                                             }
                                         }
-                                    } catch (Exception e) {
-                                        Log.e(TAG, "Ошибка вытаскивания имени из CALL", e);
                                     }
+                                    // 2. СТАРАЯ СОВМЕСТИМОСТЬ (На случай, если где-то проскочит старый формат "Сергей_Call")
+                                    else if (incomingText.contains("_Call") || incomingText.equals("Владимир") || incomingText.equals("Галина") || incomingText.equals("Сергей")) {
+                                        if (!incomingText.toLowerCase().contains(myRole.toLowerCase())) {
+                                            String callerName = incomingText.replace("_Call", "").trim();
 
-                                    Log.d(TAG, "!!! СЕРВИС ИНТЕГРИРУЕТ ВХОДЯЩИЙ ВЫЗОВ ОТ: " + callerName + " !!!");
+                                            Intent callIntent = new Intent("com.pectinworld.intercom.INCOMING_CALL");
+                                            callIntent.putExtra("CALLER_NAME", callerName);
+                                            sendBroadcast(callIntent);
 
-                                    Intent callIntent = new Intent("INTERCOM_EVENT");
-                                    callIntent.putExtra("action", "INCOMING_CALL");
-                                    callIntent.putExtra("caller", callerName);
-                                    sendBroadcast(callIntent);
-
-                                } else if (incomingText.contains("COMMAND_EXIT")) {
-                                    Log.d(TAG, "СЕРВИС: Получена команда завершения связи.");
-                                    Intent exitIntent = new Intent("INTERCOM_EVENT");
-                                    exitIntent.putExtra("action", "STOP_AUDIO");
-                                    sendBroadcast(exitIntent);
+                                            showIncomingCallNotification(callerName);
+                                            playNotificationSound();
+                                        }
+                                    }
+                                    // 3. КОМАНДА ЗАВЕРШЕНИЯ СВЯЗИ
+                                    else if (incomingText.contains("COMMAND_EXIT")) {
+                                        Log.d(TAG, "СЕРВИС: Получена команда завершения связи.");
+                                        Intent exitIntent = new Intent("INTERCOM_EVENT");
+                                        exitIntent.putExtra("action", "STOP_AUDIO");
+                                        sendBroadcast(exitIntent);
+                                    }
                                 }
                             }
                         } catch (Exception internalPackEx) {
@@ -330,6 +360,104 @@ public class IntercomService extends Service {
                 val >>>= 7;
             }
             os.write((int) val);
+        }
+    }
+
+    private void showIncomingCallNotification(String callerName) {
+        Log.d(TAG, "==> [ЛОГ ВЫЗОВА] Метод showIncomingCallNotification ЗАПУЩЕН для: " + callerName);
+        try {
+            Intent openIntent = new Intent(this, MainActivity.class);
+            openIntent.putExtra("LAUNCH_ACTION", "INCOMING_CALL");
+            openIntent.putExtra("CALLER_NAME", callerName);
+            openIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+
+            int pendingFlags = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M
+                    ? android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
+                    : android.app.PendingIntent.FLAG_UPDATE_CURRENT;
+
+            android.app.PendingIntent openPendingIntent = android.app.PendingIntent.getActivity(
+                    this,
+                    1001,
+                    openIntent,
+                    pendingFlags
+            );
+
+            Intent answerIntent = new Intent(this, MainActivity.class);
+            answerIntent.putExtra("LAUNCH_ACTION", "INCOMING_CALL");
+            answerIntent.putExtra("CALLER_NAME", callerName);
+            answerIntent.putExtra("AUTO_ANSWER", true);
+            answerIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+
+            android.app.PendingIntent answerPendingIntent = android.app.PendingIntent.getActivity(
+                    this,
+                    1002,
+                    answerIntent,
+                    pendingFlags
+            );
+
+            // КРИТИЧЕСКИ ВАЖНО: Меняем ID канала на абсолютно новый (например, V3),
+            // так как старые ID каналов Android кэширует в системе и не меняет их важность из кода!
+            String callChannelId = "IntercomHeadsUpChannel_V3";
+            NotificationManager manager = getSystemService(NotificationManager.class);
+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                Log.d(TAG, "[ЛОГ ВЫЗОВА] Создание абсолютно нового канала V3...");
+                NotificationChannel callChannel = new NotificationChannel(
+                        callChannelId,
+                        "Входящие вызовы (Интерком)",
+                        NotificationManager.IMPORTANCE_HIGH // Принудительный Heads-up баннер
+                );
+                callChannel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+                callChannel.enableVibration(true);
+                callChannel.enableLights(true);
+
+                if (manager != null) {
+                    manager.createNotificationChannel(callChannel);
+                    Log.d(TAG, "[ЛОГ ВЫЗОВА] Канал V3 успешно зарегистрирован.");
+                }
+            }
+
+            NotificationCompat.Builder builder = new NotificationCompat.Builder(this, callChannelId)
+                    // Меняем иконку на стандартную иконку приложения, она никогда не заблокируется системой
+                    .setSmallIcon(android.R.drawable.sym_def_app_icon)
+                    .setContentTitle("📞 Входящий вызов")
+                    .setContentText("Вас вызывает: " + callerName)
+                    .setPriority(NotificationCompat.PRIORITY_MAX)
+                    .setDefaults(NotificationCompat.DEFAULT_ALL)
+                    .setCategory(NotificationCompat.CATEGORY_CALL)
+                    .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                    .setContentIntent(openPendingIntent)
+                    .setAutoCancel(true)
+                    .setOngoing(true)
+                    .addAction(android.R.drawable.ic_menu_call, "ОТВЕТИТЬ", answerPendingIntent);
+
+            if (manager != null) {
+                Log.d(TAG, "[ЛОГ ВЫЗОВА] Публикация баннера через manager.notify(2)...");
+                manager.notify(2, builder.build());
+                Log.d(TAG, "[ЛОГ ВЫЗОВА] Баннер успешно отправлен в систему.");
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "[ЛОГ ВЫЗОВА] Ошибка создания всплывающего баннера", e);
+        }
+    }
+
+    private void playNotificationSound() {
+        try {
+            android.net.Uri alert = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE);
+            if (alert == null) {
+                alert = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION);
+            }
+
+            if (alert != null) {
+                android.media.Ringtone r = android.media.RingtoneManager.getRingtone(getApplicationContext(), alert);
+                if (r != null) {
+                    r.play();
+                    Log.d(TAG, "Звуковой сигнал вызова успешно запущен.");
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Не удалось воспроизвести звуковой сигнал звонка", e);
         }
     }
 
