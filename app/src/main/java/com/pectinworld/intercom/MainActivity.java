@@ -915,7 +915,7 @@ public class MainActivity extends AppCompatActivity {
                 callDos.writeShort(0); callDos.writeInt(verBody.length); callDos.write(verBody); callDos.flush();
 
                 // 2. Отправка пакета Authenticate с суффиксом вызова
-                String callUser = currentLoggedInRole + "_Call";
+                String callUser = "COMMAND_CALL_START:" + currentLoggedInRole + "-" +  targetName;
                 String serverPassword = "PectinWorldIntercom1970";
                 ByteArrayOutputStream aOs = new ByteArrayOutputStream();
                 aOs.write(0x0A); byte[] uBytes = callUser.getBytes("UTF-8"); writeVarIntStream(aOs, uBytes.length); aOs.write(uBytes);
@@ -934,7 +934,7 @@ public class MainActivity extends AppCompatActivity {
                     if (msgType == 5) break;
                 }
 
-// 3. Отправка Protobuf TextMessage (Тип 11) с адресацией "Кто->Кому"
+                // 3. Отправка Protobuf TextMessage (Тип 11) с адресацией "Кто->Кому"
                 // Пример: "COMMAND_CALL_START:Сергей->Галина"
                 String callMessage = "COMMAND_CALL_START:" + currentLoggedInRole + "->" + targetName;
                 byte[] msgStringBytes = callMessage.getBytes("UTF-8");

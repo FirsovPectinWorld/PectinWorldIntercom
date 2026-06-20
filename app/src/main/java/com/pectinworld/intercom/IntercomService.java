@@ -88,12 +88,12 @@ public class IntercomService extends Service {
                                 dos.writeInt(0);
                                 dos.flush();
                             }
-                            Log.d(TAG, "--> Отправлен фоновый Ping для поддержания соединения");
+                            //Log.d(TAG, "--> Отправлен фоновый Ping для поддержания соединения");
                         }
                     } catch (InterruptedException e) {
                         break;
                     } catch (Exception e) {
-                        Log.e(TAG, "Ошибка отправки фонового Ping: " + e.getMessage());
+                        //Log.e(TAG, "Ошибка отправки фонового Ping: " + e.getMessage());
                     }
                 }
             }).start();
@@ -250,51 +250,60 @@ public class IntercomService extends Service {
                                 Log.d(TAG, "!!! ИТОГОВЫЙ РАСПАРСЕННЫЙ ТЕКСТ ДЛЯ ОБРАБОТКИ: '" + incomingText + "'");
 
                                 if (!incomingText.isEmpty()) {
+                                    Log.d(TAG, "!!! ВОШЛИ ВНУТРЬ: '" + incomingText + "'");
+
                                     String myRole = (cachedUserRole != null) ? cachedUserRole.trim() : "Unknown";
+                                    Log.d(TAG, "!!! ПОЛУЧИЛИ ЗНАЧЕНИЕ myRole: '" + myRole + "'");
 
-                                    // 1. АДРЕСНЫЙ ВЫЗОВ (Новый формат)
+                                    // 1. АДРЕСНЫЙ ВЫЗОВ (Архитектурно правильный формат с префиксом)
                                     if (incomingText.contains("COMMAND_CALL_START:")) {
+
+                                        // Отрезаем префикс, оставляя только чистые данные: "Владимир-Галина"
                                         String addressData = incomingText.replace("COMMAND_CALL_START:", "").trim();
+                                        Log.d(TAG, "[СЕРВИС] Обнаружена команда вызова. Данные адреса: '" + addressData + "'");
 
-                                        if (addressData.contains("->")) {
-                                            String[] parts = addressData.split("->");
-                                            String sender = parts[0].trim();   // Кто звонит
-                                            String receiver = parts[1].trim(); // Кому звонят
+                                        if (addressData.contains("-")) {
+                                            String[] parts = addressData.split("-");
 
-                                            // Реагирует ТОЛЬКО тот, чья роль совпадает с получателем
-                                            if (myRole.equalsIgnoreCase(receiver)) {
-                                                Log.d(TAG, "!!! МНЕ ЗВОНЯТ! От: " + sender + " Для меня: " + myRole);
+                                            // Защита: проверяем, что у нас есть и отправитель, и получатель
+                                            if (parts.length == 2) {
+                                                String sender = parts[0].trim();   // Кто звонит
+                                                String receiver = parts[1].trim(); // Кому звонят
 
-                                                Intent callIntent = new Intent("com.pectinworld.intercom.INCOMING_CALL");
-                                                callIntent.putExtra("CALLER_NAME", sender);
-                                                sendBroadcast(callIntent);
+                                                Log.d(TAG, "!!! АНАЛИЗ АДРЕСА! От: " + sender + " | Для: " + receiver + " | Я: " + myRole);
 
-                                                showIncomingCallNotification(sender);
-                                                playNotificationSound();
+                                                // Реагирует ТОЛЬКО тот, чья роль совпадает с получателем
+                                                if (myRole.equalsIgnoreCase(receiver)) {
+                                                    Log.d(TAG, "!!! МНЕ ЗВОНЯТ! Запускаю уведомления. От: " + sender);
+
+                                                    Intent callIntent = new Intent("com.pectinworld.intercom.INCOMING_CALL");
+                                                    callIntent.putExtra("CALLER_NAME", sender);
+                                                    sendBroadcast(callIntent);
+
+                                                    showIncomingCallNotification(sender);
+                                                    playNotificationSound();
+                                                } else {
+                                                    Log.d(TAG, "[ФИЛЬТР АДРЕСА] Звонок от " + sender + " предназначен для " + receiver + ". Я (" + myRole + ") игнорирую.");
+                                                }
                                             } else {
-                                                Log.d(TAG, "[ФИЛЬТР АДРЕСА] Звонок от " + sender + " предназначен для " + receiver + ". Я (" + myRole + ") игнорирую.");
+                                                Log.e(TAG, "[ОШИБКА] Неверный формат имен после префикса: " + addressData);
                                             }
+                                        } else {
+                                            Log.e(TAG, "[ОШИБКА] Отсутствует разделитель '-' в адресных данных: " + addressData);
                                         }
                                     }
-                                    // 2. СТАРАЯ СОВМЕСТИМОСТЬ (На случай, если где-то проскочит старый формат "Сергей_Call")
-                                    else if (incomingText.contains("_Call") || incomingText.equals("Владимир") || incomingText.equals("Галина") || incomingText.equals("Сергей")) {
-                                        if (!incomingText.toLowerCase().contains(myRole.toLowerCase())) {
-                                            String callerName = incomingText.replace("_Call", "").trim();
 
-                                            Intent callIntent = new Intent("com.pectinworld.intercom.INCOMING_CALL");
-                                            callIntent.putExtra("CALLER_NAME", callerName);
-                                            sendBroadcast(callIntent);
-
-                                            showIncomingCallNotification(callerName);
-                                            playNotificationSound();
-                                        }
-                                    }
-                                    // 3. КОМАНДА ЗАВЕРШЕНИЯ СВЯЗИ
+                                    // 2. КОМАНДА ЗАВЕРШЕНИЯ СВЯЗИ
                                     else if (incomingText.contains("COMMAND_EXIT")) {
                                         Log.d(TAG, "СЕРВИС: Получена команда завершения связи.");
                                         Intent exitIntent = new Intent("INTERCOM_EVENT");
                                         exitIntent.putExtra("action", "STOP_AUDIO");
                                         sendBroadcast(exitIntent);
+                                    }
+
+                                    // 3. ПРОЧИЕ СЕРВИСНЫЕ ИЛИ ТЕКСТОВЫЕ ПАКЕТЫ
+                                    else {
+                                        Log.d(TAG, "[ИНФО] Получен пакет общего типа (игнорируем или логируем): " + incomingText);
                                     }
                                 }
                             }
