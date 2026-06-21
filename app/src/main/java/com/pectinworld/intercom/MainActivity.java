@@ -44,6 +44,7 @@ import android.content.Intent;
 import android.os.Build;
 
 public class MainActivity extends AppCompatActivity {
+    private static final String TAG = "AUDIO2_SERVICE";
 
     private LinearLayout loginBlock, intercomBlock;
     private EditText passwordInput;
@@ -60,9 +61,11 @@ public class MainActivity extends AppCompatActivity {
     private static final String PASS_SERGEY = "s";
 
     // ЦВЕТА СЛАЙДЕРОВ ДЛЯ РАЗЛИЧНЫХ СОСТОЯНИЙ СВЯЗИ
-    private static final int COLOR_NEUTRAL = 0xFFFF9800; // Оранжевый (базовый)
-    private static final int COLOR_INCOMING = 0xFFD32F2F; // Красный (тебя вызывают)
-    private static final int COLOR_ACTIVE = 0xFF74985A;   // Твой фирменный зеленый
+    private static final int COLOR_NEUTRAL = 0xFFFBC02D;  // 1. Покой: Желтый (Яркий Amber/Yellow)
+    private static final int COLOR_INCOMING = 0xFFD32F2F; // 2. Вызов: Красный (Мягкий красный)
+    private static final int COLOR_ACTIVE = 0xFFCDDC39;   // 3. Разговор: Лимонный (Lime/Light Green)
+    private static final int COLOR_OUTGOING = 0xFF29B6F6; // 4. Исходящий вызов (Светло-голубой)
+    private static final int COLOR_THUMB = 0xFF1B5E20;    // 5. Ползунок: Наш фирменный темно-зеленый
 
     private static final String SERVER_HOST = "90.171.130.20";
     private static final int SERVER_PORT = 64738;
@@ -88,6 +91,8 @@ public class MainActivity extends AppCompatActivity {
     private int mySession = -1;
     private boolean audioStarted = false;
     private String currentLoggedInRole = "Unknown";
+
+    public static final String ACTION_SEND_EXIT = "com.pectinworld.intercom.SEND_EXIT";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -117,21 +122,21 @@ public class MainActivity extends AppCompatActivity {
             startIntercomServiceWithRole(savedRole);
             setupIntercomUI(savedRole);
         } else {
-            Log.d("AUDIO2", "Сервис не запущен: ожидаем авторизации пользователя.");
+            //Log.d("AUDIO2", "Сервис не запущен: ожидаем авторизации пользователя.");
             loginButton.setOnClickListener(v -> handleLogin());
         }
 
-        Log.d("INTERCOM_MAIN", "==> [ЛОГ ACTIVITY] onCreate вызван. Проверяем входящий Intent...");
+        //Log.d("INTERCOM_MAIN", "==> [ЛОГ ACTIVITY] onCreate вызван. Проверяем входящий Intent...");
         if (getIntent() != null) {
             String action = getIntent().getStringExtra("LAUNCH_ACTION");
-            Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] onCreate Intent Action: " + action);
+            //Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] onCreate Intent Action: " + action);
             if ("INCOMING_CALL".equals(action)) {
                 String caller = getIntent().getStringExtra("CALLER_NAME");
-                Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] Найдена команда звонка в onCreate от: " + caller);
+                //Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] Найдена команда звонка в onCreate от: " + caller);
                 handleIncomingCallFromIntent(caller);
             }
         } else {
-            Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] onCreate Intent равен null.");
+            //Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] onCreate Intent равен null.");
         }
 
         // Позволяет Activity открываться поверх заблокированного экрана
@@ -150,11 +155,11 @@ public class MainActivity extends AppCompatActivity {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                     != PackageManager.PERMISSION_GRANTED) {
 
-                Log.w("INTERCOM_MAIN", "Разрешение POST_NOTIFICATIONS отсутствует. Запрашиваем...");
+                //Log.w("INTERCOM_MAIN", "Разрешение POST_NOTIFICATIONS отсутствует. Запрашиваем...");
                 ActivityCompat.requestPermissions(this,
                         new String[]{Manifest.permission.POST_NOTIFICATIONS}, 101);
             } else {
-                Log.d("INTERCOM_MAIN", "Разрешение POST_NOTIFICATIONS уже есть.");
+                //Log.d("INTERCOM_MAIN", "Разрешение POST_NOTIFICATIONS уже есть.");
             }
         }
 
@@ -166,46 +171,65 @@ public class MainActivity extends AppCompatActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        Log.d("INTERCOM_MAIN", "==> [ЛОГ ACTIVITY] onNewIntent вызван! Приложение было свернуто, но проснулось.");
+        //Log.d("INTERCOM_MAIN", "==> [ЛОГ ACTIVITY] onNewIntent вызван! Приложение было свернуто, но проснулось.");
         if (intent != null) {
             String action = intent.getStringExtra("LAUNCH_ACTION");
-            Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] onNewIntent Action: " + action);
+            //Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] onNewIntent Action: " + action);
             if ("INCOMING_CALL".equals(action)) {
                 String caller = intent.getStringExtra("CALLER_NAME");
-                Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] Найдена команда звонка в onNewIntent от: " + caller);
+                //Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] Найдена команда звонка в onNewIntent от: " + caller);
                 handleIncomingCallFromIntent(caller);
             }
         }
     }
 
     private void handleIncomingCallFromIntent(String callerName) {
-        Log.d("INTERCOM_MAIN", "==> [ЛОГ ACTIVITY] Точка handleIncomingCallFromIntent ВЫПОЛНЯЕТСЯ для: " + callerName);
-
+        //Log.d(TAG, "[МЕТОД UI] Вызов handleIncomingCallFromIntent для абонента: " + callerName);
         if (welcomeText != null) {
             welcomeText.setText("🚨 ВХОДЯЩИЙ ВЫЗОВ ОТ: " + callerName.toUpperCase());
-            Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] Текст во welcomeText успешно изменен.");
-        } else {
-            Log.e("INTERCOM_MAIN", "[ЛОГ ACTIVITY] ОШИБКА: welcomeText равен null!");
         }
 
-        try {
-            if (callerName.equalsIgnoreCase("Галина") || callerName.toLowerCase().contains("galina")) {
-                if (seekContactOne != null) {
-                    seekContactOne.getProgressDrawable().setColorFilter(COLOR_INCOMING, android.graphics.PorterDuff.Mode.SRC_IN);
-                    seekContactOne.getThumb().setColorFilter(COLOR_INCOMING, android.graphics.PorterDuff.Mode.SRC_IN);
-                    Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] Слайдер 1 перекрашен в КРАСНЫЙ.");
-                }
-            } else if (callerName.equalsIgnoreCase("Сергей") || callerName.toLowerCase().contains("sergey")) {
-                if (seekContactTwo != null) {
-                    seekContactTwo.getProgressDrawable().setColorFilter(COLOR_INCOMING, android.graphics.PorterDuff.Mode.SRC_IN);
-                    seekContactTwo.getThumb().setColorFilter(COLOR_INCOMING, android.graphics.PorterDuff.Mode.SRC_IN);
-                    Log.d("INTERCOM_MAIN", "[ЛОГ ACTIVITY] Слайдер 2 перекрашен в КРАСНЫЙ.");
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    String lowerCaller = callerName.toLowerCase().trim();
+                    //Log.d(TAG, "[МЕТОД UI_ПОТОК] Проверка ролей. Моя текущая роль: " + currentLoggedInRole);
+
+                    // Если звонит Галина
+                    if (lowerCaller.contains("галина") || lowerCaller.contains("galina")) {
+                        if (seekContactOne != null) {
+                            //Log.d(TAG, "[МЕТОД UI_ПОТОК] Выставляем Слайдер 1 (Галина) в режим ВЫЗОВА (50%, Красный)");
+                            seekContactOne.setTag(COLOR_INCOMING);
+                            setSliderTrackColor(seekContactOne, COLOR_INCOMING);
+                            seekContactOne.setProgress(50);
+                        }
+                    }
+                    // Если звонит Сергей
+                    else if (lowerCaller.contains("сергей") || lowerCaller.contains("sergey")) {
+                        if (seekContactTwo != null) {
+                            //Log.d(TAG, "[МЕТОД UI_ПОТОК] Выставляем Слайдер 2 (Сергей) в режим ВЫЗОВА (50%, Красный)");
+                            seekContactTwo.setTag(COLOR_INCOMING);
+                            setSliderTrackColor(seekContactTwo, COLOR_INCOMING);
+                            seekContactTwo.setProgress(50);
+                        }
+                    }
+                    // Если звонит Владимир (логика на телефонах Галины или Сергея)
+                    else if (lowerCaller.contains("владимир") || lowerCaller.contains("vladimir")) {
+                        if (currentLoggedInRole != null && (currentLoggedInRole.equalsIgnoreCase("Галина") || currentLoggedInRole.equalsIgnoreCase("Сергей"))) {
+                            if (seekContactOne != null) {
+                                //Log.d(TAG, "[МЕТОД UI_ПОТОК] Мне звонит Владимир. Слайдер 1 в режим ВЫЗОВА (50%, Красный)");
+                                seekContactOne.setTag(COLOR_INCOMING);
+                                setSliderTrackColor(seekContactOne, COLOR_INCOMING);
+                                seekContactOne.setProgress(50);
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    //Log.e(TAG, "[МЕТОД UI_ПОТОК] Ошибка при установке состояния вызова", e);
                 }
             }
-        } catch (Exception e) {
-            Log.e("INTERCOM_MAIN", "[ЛОГ ACTIVITY] Ошибка изменения цветов слайдеров", e);
-        }
-
+        });
         Toast.makeText(this, "Входящий вызов: " + callerName, Toast.LENGTH_LONG).show();
     }
 
@@ -236,7 +260,7 @@ public class MainActivity extends AppCompatActivity {
         } else {
             startService(serviceIntent);
         }
-        Log.d("AUDIO2", "Команда на запуск IntercomService отправлена для роли: " + role);
+        //Log.d("AUDIO2", "Команда на запуск IntercomService отправлена для роли: " + role);
     }
 
     private void setupIntercomUI(String role) {
@@ -255,6 +279,16 @@ public class MainActivity extends AppCompatActivity {
             txtContactTwo.setText("👉 Свайп вправо: Вызвать Галину");
         }
 
+        seekContactOne.setMax(100);
+        seekContactOne.setProgress(0);
+        seekContactOne.setTag(COLOR_NEUTRAL); // Состояние покоя (будет использоваться в логике жестов)
+        setSliderTrackColor(seekContactOne, COLOR_NEUTRAL); // Красим дорожку в желтый, ползунок в темно-зеленый
+
+        seekContactTwo.setMax(100);
+        seekContactTwo.setProgress(0);
+        seekContactTwo.setTag(COLOR_NEUTRAL); // Состояние покоя
+        setSliderTrackColor(seekContactTwo, COLOR_NEUTRAL); // Красим дорожку в желтый, ползунок в темно-зеленый
+
         btnGeneralCall.setEnabled(false);
         btnGeneralCall.setAlpha(0.5f);
 
@@ -269,30 +303,67 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onStopTrackingTouch(SeekBar seekBar) {
                 int progress = seekBar.getProgress();
-                boolean wasActive = (seekBar.getTag() != null && (int)seekBar.getTag() == COLOR_ACTIVE);
+                int currentStatus = (seekBar.getTag() != null) ? (int) seekBar.getTag() : COLOR_NEUTRAL;
 
-                if (wasActive) {
-                    if (progress <= 5) {
-                        seekBar.setProgress(0);
-                        seekBar.setTag(COLOR_NEUTRAL);
-                        setSliderTrackColor(seekBar, COLOR_NEUTRAL);
-                        sendExitCommandToServer(dos);
-                        stopAudio();
-                        Log.d("AUDIO2", "Свайп влево: Вышли из комнаты 1");
-                    } else {
-                        seekBar.setProgress(100);
+                // Определяем, кто наш собеседник
+                String target = currentLoggedInRole.equals("Владимир") ? "Галина" : "Владимир";
+
+                if (progress <= 5) {
+                    // СВАЙП ВЛЕВО: Отбой разговора, отказ от входящего или отмена исходящего
+                    Log.d(TAG, "[СЛАЙДЕР] Сброс/Отбой разговора. Текущий статус: " + currentStatus);
+
+                    if (currentStatus == COLOR_INCOMING || currentStatus == COLOR_OUTGOING) {
+                        // Если отменяем звонок ДО разговора
+                        sendRejectPacket(target);
+                    } else if (currentStatus == COLOR_ACTIVE) {
+                        // ЕСЛИ ЗАВЕРШАЕМ АКТИВНЫЙ РАЗГОВОР:
+                        // Шлём интент в сервис, чтобы он аккуратно и без крашей пустил COMMAND_EXIT в живой сокет
+                        Intent exitIntent = new Intent(MainActivity.this, IntercomService.class);
+                        exitIntent.setAction("com.pectinworld.intercom.SEND_EXIT");
+                        exitIntent.putExtra("TARGET_NAME", target);
+                        startService(exitIntent);
                     }
-                } else {
-                    if (progress >= 95) {
-                        seekBar.setProgress(100);
+
+                    // Возвращаем интерфейс локально в исходное состояние покоя
+                    seekBar.setProgress(0);
+                    seekBar.setTag(COLOR_NEUTRAL);
+                    setSliderTrackColor(seekBar, COLOR_NEUTRAL);
+
+                    // Гасим рингтоны, если они играли
+                    Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
+                    sendBroadcast(stopIntent);
+
+                    // Останавливаем аудио-потоки локально
+                    stopAudio();
+                }
+                else if (progress >= 95) {
+                    // СВАЙП ВПРАВО: Начать вызов или Ответить на звонок
+                    seekBar.setProgress(100);
+
+                    if (currentStatus == COLOR_INCOMING) {
                         seekBar.setTag(COLOR_ACTIVE);
                         setSliderTrackColor(seekBar, COLOR_ACTIVE);
 
-                        // ШАГ 1: Фоновая посылка пакета вызова перед запуском аудиопотока
-                        String target = currentLoggedInRole.equals("Владимир") ? "Галина" : "Владимир";
-                        sendCallPacket(target);
+                        Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
+                        sendBroadcast(stopIntent);
 
+                        sendAcceptPacket(target);
                         startVoiceCommunication("Room_One");
+                    } else {
+                        seekBar.setTag(COLOR_OUTGOING);
+                        setSliderTrackColor(seekBar, COLOR_OUTGOING);
+
+                        sendCallPacket(target);
+                    }
+                }
+                else {
+                    // ПОЛЬЗОВАТЕЛЬ БРОСИЛ ПОЛЗУНОК ПОСЕРЕДИНЕ
+                    if (currentStatus == COLOR_INCOMING) {
+                        seekBar.setProgress(50);
+                        setSliderTrackColor(seekBar, COLOR_INCOMING);
+                    } else if (currentStatus == COLOR_ACTIVE || currentStatus == COLOR_OUTGOING) {
+                        seekBar.setProgress(100);
+                        setSliderTrackColor(seekBar, currentStatus);
                     } else {
                         seekBar.setProgress(0);
                         setSliderTrackColor(seekBar, COLOR_NEUTRAL);
@@ -312,30 +383,67 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onStopTrackingTouch(SeekBar seekBar) {
                 int progress = seekBar.getProgress();
-                boolean wasActive = (seekBar.getTag() != null && (int)seekBar.getTag() == COLOR_ACTIVE);
+                int currentStatus = (seekBar.getTag() != null) ? (int) seekBar.getTag() : COLOR_NEUTRAL;
 
-                if (wasActive) {
-                    if (progress <= 5) {
-                        seekBar.setProgress(0);
-                        seekBar.setTag(COLOR_NEUTRAL);
-                        setSliderTrackColor(seekBar, COLOR_NEUTRAL);
-                        sendExitCommandToServer(dos);
-                        stopAudio();
-                        Log.d("AUDIO2", "Свайп влево: Вышли из комнаты 1");
-                    } else {
-                        seekBar.setProgress(100);
+                // Определяем, кто наш собеседник
+                String target = currentLoggedInRole.equals("Владимир") ? "Галина" : "Владимир";
+
+                if (progress <= 5) {
+                    // СВАЙП ВЛЕВО: Отбой разговора, отказ от входящего или отмена исходящего
+                    Log.d(TAG, "[СЛАЙДЕР] Сброс/Отбой разговора. Текущий статус: " + currentStatus);
+
+                    if (currentStatus == COLOR_INCOMING || currentStatus == COLOR_OUTGOING) {
+                        // Если отменяем звонок ДО разговора
+                        sendRejectPacket(target);
+                    } else if (currentStatus == COLOR_ACTIVE) {
+                        // ЕСЛИ ЗАВЕРШАЕМ АКТИВНЫЙ РАЗГОВОР:
+                        // Шлём интент в сервис, чтобы он аккуратно и без крашей пустил COMMAND_EXIT в живой сокет
+                        Intent exitIntent = new Intent(MainActivity.this, IntercomService.class);
+                        exitIntent.setAction("com.pectinworld.intercom.SEND_EXIT");
+                        exitIntent.putExtra("TARGET_NAME", target);
+                        startService(exitIntent);
                     }
-                } else {
-                    if (progress >= 95) {
-                        seekBar.setProgress(100);
+
+                    // Возвращаем интерфейс локально в исходное состояние покоя
+                    seekBar.setProgress(0);
+                    seekBar.setTag(COLOR_NEUTRAL);
+                    setSliderTrackColor(seekBar, COLOR_NEUTRAL);
+
+                    // Гасим рингтоны, если они играли
+                    Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
+                    sendBroadcast(stopIntent);
+
+                    // Останавливаем аудио-потоки локально
+                    stopAudio();
+                }
+                else if (progress >= 95) {
+                    // СВАЙП ВПРАВО: Начать вызов или Ответить на звонок
+                    seekBar.setProgress(100);
+
+                    if (currentStatus == COLOR_INCOMING) {
                         seekBar.setTag(COLOR_ACTIVE);
                         setSliderTrackColor(seekBar, COLOR_ACTIVE);
 
-                        // ШАГ 1: Фоновая посылка пакета вызова перед запуском аудиопотока
-                        String target = currentLoggedInRole.equals("Сергей") ? "Галина" : "Сергей";
-                        sendCallPacket(target);
+                        Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
+                        sendBroadcast(stopIntent);
 
+                        sendAcceptPacket(target);
                         startVoiceCommunication("Room_One");
+                    } else {
+                        seekBar.setTag(COLOR_OUTGOING);
+                        setSliderTrackColor(seekBar, COLOR_OUTGOING);
+
+                        sendCallPacket(target);
+                    }
+                }
+                else {
+                    // ПОЛЬЗОВАТЕЛЬ БРОСИЛ ПОЛЗУНОК ПОСЕРЕДИНЕ
+                    if (currentStatus == COLOR_INCOMING) {
+                        seekBar.setProgress(50);
+                        setSliderTrackColor(seekBar, COLOR_INCOMING);
+                    } else if (currentStatus == COLOR_ACTIVE || currentStatus == COLOR_OUTGOING) {
+                        seekBar.setProgress(100);
+                        setSliderTrackColor(seekBar, currentStatus);
                     } else {
                         seekBar.setProgress(0);
                         setSliderTrackColor(seekBar, COLOR_NEUTRAL);
@@ -433,7 +541,7 @@ public class MainActivity extends AppCompatActivity {
                     echoCanceler = AcousticEchoCanceler.create(audioRecord.getAudioSessionId());
                     if (echoCanceler != null) {
                         echoCanceler.setEnabled(true);
-                        Log.d("AUDIO2", "Аппаратное эхоподавление (AEC) УСПЕШНО ВКЛЮЧЕНО.");
+                        //Log.d("AUDIO2", "Аппаратное эхоподавление (AEC) УСПЕШНО ВКЛЮЧЕНО.");
                     }
                 }
 
@@ -449,7 +557,7 @@ public class MainActivity extends AppCompatActivity {
                     try {
                         if (msgType == 0) {
                             String role = currentLoggedInRole;
-                            Log.d("AUDIO2", "MainActivity считывает роль для отправки Authenticate: " + role);
+                            //Log.d("AUDIO2", "MainActivity считывает роль для отправки Authenticate: " + role);
                             String username;
                             switch (role) {
                                 case "Владимир": username = "Vladimir"; break;
@@ -494,7 +602,7 @@ public class MainActivity extends AppCompatActivity {
                                 dos.writeInt(0);
                                 dos.flush();
                             }
-                            Log.d("AUDIO2", "Валидный пакет Authenticate отправлен.");
+                            //Log.d("AUDIO2", "Валидный пакет Authenticate отправлен.");
                         }
                         else if (msgType == 9) { // Текстовое сообщение во время активного звонка
                             try {
@@ -530,11 +638,11 @@ public class MainActivity extends AppCompatActivity {
                                 }
 
                                 if (incomingText.contains("COMMAND_EXIT")) {
-                                    Log.d("AUDIO2", "Получена команда автовыхода от собеседника!");
+                                    //Log.d("AUDIO2", "Получена команда автовыхода от собеседника!");
                                     stopAudio();
                                 }
                             } catch (Exception e) {
-                                Log.e("AUDIO2", "Ошибка разбора текстового пакета типа 9 в Activity", e);
+                                //Log.e("AUDIO2", "Ошибка разбора текстового пакета типа 9 в Activity", e);
                             }
                         }
                         else if (msgType == 13) {
@@ -563,10 +671,10 @@ public class MainActivity extends AppCompatActivity {
                                 if (msgBody.length > 1 && msgBody[0] == 0x08) {
                                     int[] off = {1};
                                     mySession = readVarIntFromBytes(msgBody, off);
-                                    Log.d("AUDIO2", "=== ServerSync === Сессия определена: " + mySession);
+                                    //Log.d("AUDIO2", "=== ServerSync === Сессия определена: " + mySession);
                                 }
                             } catch (Exception e) {
-                                Log.e("AUDIO2", "Ошибка разбора сессии", e);
+                                //Log.e("AUDIO2", "Ошибка разбора сессии", e);
                             }
 
                             audioStarted = true;
@@ -620,17 +728,17 @@ public class MainActivity extends AppCompatActivity {
                                     startAudioSendingLoop(finalDos, finalTargetRoom);
 
                                 } catch (Exception e) {
-                                    Log.e("AUDIO2", "Ошибка отправки UserState", e);
+                                    //Log.e("AUDIO2", "Ошибка отправки UserState", e);
                                 }
                             }).start();
                         }
                     } catch (Exception internalPackEx) {
-                        Log.e("AUDIO2", "Ошибка обработки пакета типа: " + msgType, internalPackEx);
+                        //Log.e("AUDIO2", "Ошибка обработки пакета типа: " + msgType, internalPackEx);
                     }
                 }
 
             } catch (Exception e) {
-                Log.e("AUDIO2", "Error in voice thread", e);
+                //Log.e("AUDIO2", "Error in voice thread", e);
             } finally {
                 stopAudio();
                 try { if (tcpSocket != null) tcpSocket.close(); } catch (Exception e) {}
@@ -647,9 +755,9 @@ public class MainActivity extends AppCompatActivity {
             opusEncoder = MediaCodec.createEncoderByType("audio/opus");
             opusEncoder.configure(encFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
             opusEncoder.start();
-            Log.d("AUDIO2", "Opus энкодер успешно запущен");
+            //Log.d("AUDIO2", "Opus энкодер успешно запущен");
         } catch (Exception e) {
-            Log.e("AUDIO2", "Ошибка старта энкодера: " + e.getMessage());
+            //Log.e("AUDIO2", "Ошибка старта энкодера: " + e.getMessage());
         }
     }
 
@@ -672,10 +780,10 @@ public class MainActivity extends AppCompatActivity {
             decoder.start();
 
             decoderPool.put(session, decoder);
-            Log.d("AUDIO2", "---> Создан персональный декодер Opus для сессии #" + session);
+            //Log.d("AUDIO2", "---> Создан персональный декодер Opus для сессии #" + session);
             return decoder;
         } catch (Exception e) {
-            Log.e("AUDIO2", "Не удалось создать декодер для сессии " + session, e);
+            //Log.e("AUDIO2", "Не удалось создать декодер для сессии " + session, e);
             return null;
         }
     }
@@ -734,12 +842,12 @@ public class MainActivity extends AppCompatActivity {
                 outputBufferIndex = currentDecoder.dequeueOutputBuffer(bufferInfo, 0);
             }
         } catch (Exception e) {
-            Log.e("AUDIO_TRACK", "Критический сбой в handleIncomingAudio", e);
+            //Log.e("AUDIO_TRACK", "Критический сбой в handleIncomingAudio", e);
         }
     }
 
     private void startAudioSendingLoop(final DataOutputStream dos, String roomName) {
-        Log.d("AUDIO2", "Audio sending loop STARTED");
+        //Log.d("AUDIO2", "Audio sending loop STARTED");
         new Thread(() -> {
             int frameSizeInBytes = 1920;
             byte[] audioBuffer = new byte[frameSizeInBytes];
@@ -797,14 +905,14 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
             } catch (Exception e) {
-                Log.e("AUDIO2", "Критическая ошибка в аудио-петле отправки", e);
+                //Log.e("AUDIO2", "Критическая ошибка в аудио-петле отправки", e);
             }
         }).start();
     }
 
     private void stopAudio() {
         try {
-            Log.d("AUDIO2", "Вызван метод stopAudio(). Освобождение всех ресурсов...");
+            //Log.d("AUDIO2", "Вызван метод stopAudio(). Освобождение всех ресурсов...");
             isSfxRunning = false;
 
             if (echoCanceler != null) {
@@ -860,7 +968,7 @@ public class MainActivity extends AppCompatActivity {
             if (audioManager != null) {
                 audioManager.setMode(AudioManager.MODE_NORMAL);
             }
-            Log.d("AUDIO2", "Очистка аудио-движка завершена успешно.");
+            //Log.d("AUDIO2", "Очистка аудио-движка завершена успешно.");
 
             runOnUiThread(() -> {
                 if (seekContactOne != null) {
@@ -875,7 +983,7 @@ public class MainActivity extends AppCompatActivity {
                 }
             });
         } catch (Exception e) {
-            Log.e("AUDIO2", "Ошибка в stopAudio: " + e.getMessage());
+            //Log.e("AUDIO2", "Ошибка в stopAudio: " + e.getMessage());
         }
     }
 
@@ -883,7 +991,7 @@ public class MainActivity extends AppCompatActivity {
     private void sendCallPacket(String targetName) {
         new Thread(() -> {
             try {
-                Log.d("AUDIO2", "=== ВЫЗОВ: Начало отправки для " + targetName + " ===");
+                //Log.d("AUDIO2", "=== ВЫЗОВ: Начало отправки для " + targetName + " ===");
 
                 TrustManager[] trustAllCerts = new TrustManager[]{
                         new X509TrustManager() {
@@ -914,8 +1022,18 @@ public class MainActivity extends AppCompatActivity {
                 byte[] verBody = vOs.toByteArray();
                 callDos.writeShort(0); callDos.writeInt(verBody.length); callDos.write(verBody); callDos.flush();
 
-                // 2. Отправка пакета Authenticate с суффиксом вызова
-                String callUser = "COMMAND_CALL_START:" + currentLoggedInRole + "-" +  targetName;
+                // Динамическое определение содержимого команды
+                String finalPayload;
+                if (targetName.contains(":")) {
+                    // Если прилетела уже готовая команда (ACCEPT/REJECT), отправляем её в чистом виде
+                    finalPayload = targetName;
+                } else {
+                    // Если прилетело просто имя (например, "Галина"), собираем чистую команду вызова с дефисом
+                    finalPayload = "COMMAND_CALL_START:" + currentLoggedInRole + "-" + targetName;
+                }
+
+                // 2. Отправка пакета Authenticate с очищенной строкой команды
+                String callUser = finalPayload;
                 String serverPassword = "PectinWorldIntercom1970";
                 ByteArrayOutputStream aOs = new ByteArrayOutputStream();
                 aOs.write(0x0A); byte[] uBytes = callUser.getBytes("UTF-8"); writeVarIntStream(aOs, uBytes.length); aOs.write(uBytes);
@@ -934,18 +1052,15 @@ public class MainActivity extends AppCompatActivity {
                     if (msgType == 5) break;
                 }
 
-                // 3. Отправка Protobuf TextMessage (Тип 11) с адресацией "Кто->Кому"
-                // Пример: "COMMAND_CALL_START:Сергей->Галина"
-                String callMessage = "COMMAND_CALL_START:" + currentLoggedInRole + "->" + targetName;
+                // 3. Отправка Protobuf TextMessage (Тип 11) с единым разделителем дефисом (-)
+                String callMessage = finalPayload;
                 byte[] msgStringBytes = callMessage.getBytes("UTF-8");
 
                 ByteArrayOutputStream txOs = new ByteArrayOutputStream();
                 txOs.write(0x18); txOs.write(1); // Поле №3: channel_id (ID комнаты = 1)
 
-                // ВНИМАНИЕ: Если длина строки msgStringBytes может превысить 127 байт (в нашем случае нет),
-                // лучше использовать ваш метод writeVarIntStream, но для коротких имен явная запись длины тоже сработает.
                 txOs.write(0x2A);
-                writeVarIntStream(txOs, msgStringBytes.length); // Используем ваш безопасный varint для длины строки
+                writeVarIntStream(txOs, msgStringBytes.length); // Используем твой varint для длины строки
                 txOs.write(msgStringBytes); // Поле №5: message
 
                 byte[] txBody = txOs.toByteArray();
@@ -956,12 +1071,34 @@ public class MainActivity extends AppCompatActivity {
                 callDos.flush();
 
                 callSocket.close();
-                Log.d("AUDIO2", "=== ВЫЗОВ: Адресный пакет '" + callMessage + "' успешно отправлен ===");
+                //Log.d("AUDIO2", "=== ВЫЗОВ: Адресный пакет '" + callMessage + "' успешно отправлен ===");
 
             } catch (Exception e) {
-                Log.e("AUDIO2", "!!! ВЫЗОВ: Ошибка отправки: " + e.getMessage());
+                //Log.e("AUDIO2", "!!! ВЫЗОВ: Ошибка отправки: " + e.getMessage());
             }
         }).start();
+    }
+
+    private void sendAcceptPacket(String target) {
+        //Log.d(TAG, "[UI] Инициация отправки ACCEPT для: " + target);
+
+        // Посылаем сигнал в собственный сервис, чтобы мгновенно выключить звук у себя
+        Intent stopIntent = new Intent(this, IntercomService.class);
+        stopIntent.setAction(IntercomService.ACTION_STOP_CALL_EFFECTS);
+        startService(stopIntent);
+
+        sendCallPacket("COMMAND_CALL_ACCEPT:" + currentLoggedInRole + "-" + target);
+    }
+
+    private void sendRejectPacket(String target) {
+        //Log.d(TAG, "[UI] Инициация отправки REJECT для: " + target);
+
+        // Посылаем сигнал в собственный сервис, чтобы мгновенно выключить звук у себя
+        Intent stopIntent = new Intent(this, IntercomService.class);
+        stopIntent.setAction(IntercomService.ACTION_STOP_CALL_EFFECTS);
+        startService(stopIntent);
+
+        sendCallPacket("COMMAND_CALL_REJECT:" + currentLoggedInRole + "-" + target);
     }
 
     private void sendExitCommandToServer(final DataOutputStream finalDos) {
@@ -984,9 +1121,9 @@ public class MainActivity extends AppCompatActivity {
                     finalDos.write(txBody);
                     finalDos.flush();
                 }
-                Log.d("AUDIO2", "Скрытая команда COMMAND_EXIT отправлена в канал.");
+                //Log.d("AUDIO2", "Скрытая команда COMMAND_EXIT отправлена в канал.");
             } catch (Exception e) {
-                Log.e("AUDIO2", "Ошибка отправки команды выхода", e);
+                //Log.e("AUDIO2", "Ошибка отправки команды выхода", e);
             }
         }).start();
     }
@@ -1063,8 +1200,89 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setSliderTrackColor(SeekBar seekBar, int color) {
-        if (seekBar != null && seekBar.getProgressDrawable() != null) {
-            seekBar.getProgressDrawable().setColorFilter(color, android.graphics.PorterDuff.Mode.SRC_IN);
+        if (seekBar == null) return;
+        // Красим дорожку слайдера в цвет состояния (желтый, красный или лимонный)
+        seekBar.getProgressDrawable().setColorFilter(color, android.graphics.PorterDuff.Mode.SRC_IN);
+        // Ползунок (круг) ВСЕГДА железно красим в наш фирменный темно-зеленый
+        seekBar.getThumb().setColorFilter(COLOR_THUMB, android.graphics.PorterDuff.Mode.SRC_IN);
+    }
+
+    private final android.content.BroadcastReceiver incomingCallReceiver = new android.content.BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            //Log.d(TAG, "[АКТИВИТИ] Получен бродкаст экшен: " + action);
+
+            if ("com.pectinworld.intercom.INCOMING_CALL".equals(action)) {
+                String callerName = intent.getStringExtra("CALLER_NAME");
+                if (callerName != null) {
+                    handleIncomingCallFromIntent(callerName);
+                }
+            }
+            else if ("com.pectinworld.intercom.CALL_ACCEPTED".equals(action)) {
+                //Log.d(TAG, "[АКТИВИТИ] Собеседник принял вызов! Переключаем на ЛИМОННЫЙ и включаем звук.");
+                runOnUiThread(() -> {
+                    if (seekContactOne != null && (int)seekContactOne.getTag() == COLOR_OUTGOING) {
+                        seekContactOne.setTag(COLOR_ACTIVE);
+                        setSliderTrackColor(seekContactOne, COLOR_ACTIVE);
+                    } else if (seekContactTwo != null && (int)seekContactTwo.getTag() == COLOR_OUTGOING) {
+                        seekContactTwo.setTag(COLOR_ACTIVE);
+                        setSliderTrackColor(seekContactTwo, COLOR_ACTIVE);
+                    }
+                    startVoiceCommunication("Room_One");
+                });
+            }
+            else if ("com.pectinworld.intercom.CALL_REJECTED".equals(action)) {
+                //Log.d(TAG, "[АКТИВИТИ] Вызов отклонен или сброшен собеседником. Возврат в покой (Желтый).");
+                runOnUiThread(() -> {
+                    SeekBar activeBar = null;
+                    if (seekContactOne != null && ((int)seekContactOne.getTag() == COLOR_OUTGOING || (int)seekContactOne.getTag() == COLOR_ACTIVE || (int)seekContactOne.getTag() == COLOR_INCOMING)) {
+                        activeBar = seekContactOne;
+                    } else if (seekContactTwo != null && ((int)seekContactTwo.getTag() == COLOR_OUTGOING || (int)seekContactTwo.getTag() == COLOR_ACTIVE || (int)seekContactTwo.getTag() == COLOR_INCOMING)) {
+                        activeBar = seekContactTwo;
+                    }
+
+                    if (activeBar != null) {
+                        activeBar.setProgress(0);
+                        activeBar.setTag(COLOR_NEUTRAL);
+                        setSliderTrackColor(activeBar, COLOR_NEUTRAL);
+                    }
+                    stopAudio();
+                });
+            }
+        }
+    };
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        //Log.d(TAG, "[АКТИВИТИ] Выполняется onResume. Регистрируем incomingCallReceiver...");
+
+        android.content.IntentFilter filter = new android.content.IntentFilter();
+        filter.addAction("com.pectinworld.intercom.INCOMING_CALL"); // 1. Нам звонят
+        filter.addAction("com.pectinworld.intercom.CALL_ACCEPTED");  // 2. Наш вызов приняли (Лимонный)
+        filter.addAction("com.pectinworld.intercom.CALL_REJECTED");  // 3. Наш вызов отклонили (Сброс в желтый)
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                registerReceiver(incomingCallReceiver, filter, Context.RECEIVER_EXPORTED);
+            } else {
+                registerReceiver(incomingCallReceiver, filter);
+            }
+            //Log.d(TAG, "[АКТИВИТИ] Ресивер incomingCallReceiver со всеми экшенами успешно зарегистрирован.");
+        } catch (Exception e) {
+            //Log.e(TAG, "[АКТИВИТИ] Ошибка при регистрации ресивера", e);
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        try {
+            unregisterReceiver(incomingCallReceiver);
+            //Log.d(TAG, "[АКТИВИТИ] Ресивер отписан в onPause.");
+        } catch (Exception e) {
+            //Log.e(TAG, "[АКТИВИТИ] Ошибка при отписке ресивера", e);
         }
     }
 
