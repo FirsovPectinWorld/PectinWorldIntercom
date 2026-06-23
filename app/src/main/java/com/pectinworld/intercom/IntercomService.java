@@ -242,7 +242,7 @@ public class IntercomService extends Service {
                                 sendBroadcast(syncIntent);
                             }
                             else if (msgType == 9) { // Текстовое сообщение (Mumble TextMessage)
-                                //Log.d(TAG, "=== СЕРВИС: Получен пакет TextMessage (Тип 9) ===");
+                                Log.d(TAG, "[СЕТЬ СЫРОЙ ПАКЕТ 9] Прилетел пакет тип 9. Длина msgLen = " + msgLen + " байт. Актуальный cachedUserRole = " + cachedUserRole);
                                 String incomingText = "";
                                 //Log.d(TAG, "Размер тела пакета Тип 9: " + msgBody.length + " байт");
 
@@ -268,7 +268,7 @@ public class IntercomService extends Service {
                                             if (idx + len <= msgBody.length) {
                                                 // Извлекаем абсолютно любую строку, пришедшую в поле text
                                                 String extractedStr = new String(msgBody, idx, len, "UTF-8").trim();
-                                                //Log.d(TAG, "Найден текстовый блок (Тег " + tag + "): '" + extractedStr + "'");
+                                                Log.d(TAG, "[ПАРСЕР ПАКЕТА 9] Найдена строка (Тег " + tag + "): '" + extractedStr + "'");
 
                                                 if (!extractedStr.isEmpty()) {
                                                     incomingText = extractedStr;
@@ -586,6 +586,8 @@ public class IntercomService extends Service {
 
     private void playNotificationSound() {
         try {
+            stopCallEffects();
+
             android.net.Uri alert = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE);
             if (alert == null) {
                 alert = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION);

@@ -293,168 +293,161 @@ public class MainActivity extends AppCompatActivity {
         btnGeneralCall.setAlpha(0.5f);
 
         // НАСТРОЙКА СЛАЙДЕРА №1
-        seekContactOne.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {}
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {}
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {
-                int progress = seekBar.getProgress();
-                int currentStatus = (seekBar.getTag() != null) ? (int) seekBar.getTag() : COLOR_NEUTRAL;
-
-                // Определяем, кто наш собеседник
-                String target = currentLoggedInRole.equals("Владимир") ? "Галина" : "Владимир";
-
-                if (progress <= 5) {
-                    // СВАЙП ВЛЕВО: Отбой разговора, отказ от входящего или отмена исходящего
-                    Log.d(TAG, "[СЛАЙДЕР] Сброс/Отбой разговора. Текущий статус: " + currentStatus);
-
-                    if (currentStatus == COLOR_INCOMING || currentStatus == COLOR_OUTGOING) {
-                        // Если отменяем звонок ДО разговора
-                        sendRejectPacket(target);
-                    } else if (currentStatus == COLOR_ACTIVE) {
-                        // ЕСЛИ ЗАВЕРШАЕМ АКТИВНЫЙ РАЗГОВОР:
-                        // Шлём интент в сервис, чтобы он аккуратно и без крашей пустил COMMAND_EXIT в живой сокет
-                        Intent exitIntent = new Intent(MainActivity.this, IntercomService.class);
-                        exitIntent.setAction("com.pectinworld.intercom.SEND_EXIT");
-                        exitIntent.putExtra("TARGET_NAME", target);
-                        startService(exitIntent);
-                    }
-
-                    // Возвращаем интерфейс локально в исходное состояние покоя
-                    seekBar.setProgress(0);
-                    seekBar.setTag(COLOR_NEUTRAL);
-                    setSliderTrackColor(seekBar, COLOR_NEUTRAL);
-
-                    // Гасим рингтоны, если они играли
-                    Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
-                    sendBroadcast(stopIntent);
-
-                    // Останавливаем аудио-потоки локально
-                    stopAudio();
-                }
-                else if (progress >= 95) {
-                    // СВАЙП ВПРАВО: Начать вызов или Ответить на звонок
-                    seekBar.setProgress(100);
-
-                    if (currentStatus == COLOR_INCOMING) {
-                        seekBar.setTag(COLOR_ACTIVE);
-                        setSliderTrackColor(seekBar, COLOR_ACTIVE);
-
-                        Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
-                        sendBroadcast(stopIntent);
-
-                        sendAcceptPacket(target);
-                        startVoiceCommunication("Room_One");
-                    } else {
-                        seekBar.setTag(COLOR_OUTGOING);
-                        setSliderTrackColor(seekBar, COLOR_OUTGOING);
-
-                        sendCallPacket(target);
-                    }
-                }
-                else {
-                    // ПОЛЬЗОВАТЕЛЬ БРОСИЛ ПОЛЗУНОК ПОСЕРЕДИНЕ
-                    if (currentStatus == COLOR_INCOMING) {
-                        seekBar.setProgress(50);
-                        setSliderTrackColor(seekBar, COLOR_INCOMING);
-                    } else if (currentStatus == COLOR_ACTIVE || currentStatus == COLOR_OUTGOING) {
-                        seekBar.setProgress(100);
-                        setSliderTrackColor(seekBar, currentStatus);
-                    } else {
-                        seekBar.setProgress(0);
-                        setSliderTrackColor(seekBar, COLOR_NEUTRAL);
-                    }
-                }
-            }
-        });
+        seekContactOne.setOnSeekBarChangeListener(commonSliderListener);
 
         // НАСТРОЙКА СЛАЙДЕРА №2
-        seekContactTwo.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {}
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {}
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {
-                int progress = seekBar.getProgress();
-                int currentStatus = (seekBar.getTag() != null) ? (int) seekBar.getTag() : COLOR_NEUTRAL;
-
-                // Определяем, кто наш собеседник
-                String target = currentLoggedInRole.equals("Владимир") ? "Галина" : "Владимир";
-
-                if (progress <= 5) {
-                    // СВАЙП ВЛЕВО: Отбой разговора, отказ от входящего или отмена исходящего
-                    Log.d(TAG, "[СЛАЙДЕР] Сброс/Отбой разговора. Текущий статус: " + currentStatus);
-
-                    if (currentStatus == COLOR_INCOMING || currentStatus == COLOR_OUTGOING) {
-                        // Если отменяем звонок ДО разговора
-                        sendRejectPacket(target);
-                    } else if (currentStatus == COLOR_ACTIVE) {
-                        // ЕСЛИ ЗАВЕРШАЕМ АКТИВНЫЙ РАЗГОВОР:
-                        // Шлём интент в сервис, чтобы он аккуратно и без крашей пустил COMMAND_EXIT в живой сокет
-                        Intent exitIntent = new Intent(MainActivity.this, IntercomService.class);
-                        exitIntent.setAction("com.pectinworld.intercom.SEND_EXIT");
-                        exitIntent.putExtra("TARGET_NAME", target);
-                        startService(exitIntent);
-                    }
-
-                    // Возвращаем интерфейс локально в исходное состояние покоя
-                    seekBar.setProgress(0);
-                    seekBar.setTag(COLOR_NEUTRAL);
-                    setSliderTrackColor(seekBar, COLOR_NEUTRAL);
-
-                    // Гасим рингтоны, если они играли
-                    Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
-                    sendBroadcast(stopIntent);
-
-                    // Останавливаем аудио-потоки локально
-                    stopAudio();
-                }
-                else if (progress >= 95) {
-                    // СВАЙП ВПРАВО: Начать вызов или Ответить на звонок
-                    seekBar.setProgress(100);
-
-                    if (currentStatus == COLOR_INCOMING) {
-                        seekBar.setTag(COLOR_ACTIVE);
-                        setSliderTrackColor(seekBar, COLOR_ACTIVE);
-
-                        Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
-                        sendBroadcast(stopIntent);
-
-                        sendAcceptPacket(target);
-                        startVoiceCommunication("Room_One");
-                    } else {
-                        seekBar.setTag(COLOR_OUTGOING);
-                        setSliderTrackColor(seekBar, COLOR_OUTGOING);
-
-                        sendCallPacket(target);
-                    }
-                }
-                else {
-                    // ПОЛЬЗОВАТЕЛЬ БРОСИЛ ПОЛЗУНОК ПОСЕРЕДИНЕ
-                    if (currentStatus == COLOR_INCOMING) {
-                        seekBar.setProgress(50);
-                        setSliderTrackColor(seekBar, COLOR_INCOMING);
-                    } else if (currentStatus == COLOR_ACTIVE || currentStatus == COLOR_OUTGOING) {
-                        seekBar.setProgress(100);
-                        setSliderTrackColor(seekBar, currentStatus);
-                    } else {
-                        seekBar.setProgress(0);
-                        setSliderTrackColor(seekBar, COLOR_NEUTRAL);
-                    }
-                }
-            }
-        });
+        seekContactTwo.setOnSeekBarChangeListener(commonSliderListener);
 
         setSliderTrackColor(seekContactOne, COLOR_NEUTRAL);
         setSliderTrackColor(seekContactTwo, COLOR_NEUTRAL);
     }
+
+    SeekBar.OnSeekBarChangeListener commonSliderListener = new SeekBar.OnSeekBarChangeListener() {
+        @Override
+        public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {}
+
+        @Override
+        public void onStartTrackingTouch(SeekBar seekBar) {}
+
+        @Override
+        public void onStopTrackingTouch(SeekBar seekBar) {
+            int progress = seekBar.getProgress();
+            int currentStatus = (seekBar.getTag() != null) ? (int) seekBar.getTag() : COLOR_NEUTRAL;
+
+            // ОПРЕДЕЛЯЕМ СОБЕСЕДНИКА ДИНАМИЧЕСКИ (6 НАПРАВЛЕНИЙ)
+            String target = "";
+            int viewId = seekBar.getId();
+
+            if ("Владимир".equals(currentLoggedInRole)) {
+                if (viewId == R.id.seekContactOne) {
+                    target = "Галина";   // 1. Владимир -> Галина
+                } else if (viewId == R.id.seekContactTwo) {
+                    target = "Сергей";   // 2. Владимир -> Сергей
+                }
+            }
+            else if ("Галина".equals(currentLoggedInRole)) {
+                if (viewId == R.id.seekContactOne) {
+                    target = "Владимир";  // 3. Галина -> Владимир
+                } else if (viewId == R.id.seekContactTwo) {
+                    target = "Сергей";    // 4. Галина -> Сергей
+                }
+            }
+            else if ("Сергей".equals(currentLoggedInRole)) {
+                if (viewId == R.id.seekContactOne) {
+                    target = "Владимир";  // 5. Сергей -> Владимир
+                } else if (viewId == R.id.seekContactTwo) {
+                    target = "Галина";    // 6. Сергей -> Галина
+                }
+            }
+
+            // Страховка на случай непредвиденных ID
+            if (target.isEmpty()) {
+                target = "Галина";
+            }
+
+            if (progress <= 5) {
+                Log.d(TAG, "[СЛАЙДЕР] Сброс/Отбой разговора. Текущий статус: " + currentStatus);
+
+                if (currentStatus == COLOR_INCOMING || currentStatus == COLOR_OUTGOING || currentStatus == COLOR_ACTIVE) {
+
+                    final String finalTarget = target;
+
+                    new Thread(() -> {
+                        try {
+                            sendCallPacket("COMMAND_CALL_REJECT:" + currentLoggedInRole + "-" + finalTarget);
+                            Log.d(TAG, "[ОТБОЙ ТЕСТ] Отправлен REJECT через изолированный сокет для: " + finalTarget);
+                        } catch (Exception e) {
+                            Log.e(TAG, "[ОТБОЙ ТЕСТ] Ошибка отправки пакета: ", e);
+                        }
+                    }).start();
+                }
+
+                // Настройки применяются к тому слайдеру, который сейчас дернули
+                seekBar.setProgress(0);
+                seekBar.setTag(COLOR_NEUTRAL);
+                setSliderTrackColor(seekBar, COLOR_NEUTRAL);
+
+                Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
+                sendBroadcast(stopIntent);
+                stopAudio();
+            }
+            else if (progress >= 95) {
+                seekBar.setProgress(100);
+
+                if (currentStatus == COLOR_INCOMING) {
+                    seekBar.setTag(COLOR_ACTIVE);
+                    setSliderTrackColor(seekBar, COLOR_ACTIVE);
+
+                    Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
+                    sendBroadcast(stopIntent);
+
+                    sendAcceptPacket(target);
+                    startVoiceCommunication("Room_One");
+
+                    // =================================================================
+                    // АВТОМАТИЧЕСКИЙ СБРОС ВТОРОГО ВЫЗОВА (ЕСЛИ ОН БЫЛ)
+                    // =================================================================
+                    // Определяем, какой слайдер сейчас НЕ активен
+                    SeekBar secondarySeekBar = null;
+                    String secondaryTarget = "";
+
+                    if (seekBar.getId() == R.id.seekContactOne) {
+                        // Если Галина ответила Владимиру (слайдер 1), то второй — это Сергей
+                        secondarySeekBar = findViewById(R.id.seekContactTwo);
+                        secondaryTarget = "Владимир".equals(currentLoggedInRole) ? "Сергей" : ("Галина".equals(currentLoggedInRole) ? "Сергей" : "Галина");
+                    } else if (seekBar.getId() == R.id.seekContactTwo) {
+                        // If Галина ответила Сергею (слайдер 2), то второй — Владимир
+                        secondarySeekBar = findViewById(R.id.seekContactOne);
+                        secondaryTarget = "Владимир".equals(currentLoggedInRole) ? "Галина" : ("Галина".equals(currentLoggedInRole) ? "Владимир" : "Владимир");
+                    }
+
+                    if (secondarySeekBar != null) {
+                        int secStatus = (secondarySeekBar.getTag() != null) ? (int) secondarySeekBar.getTag() : COLOR_NEUTRAL;
+
+                        // Если по второму слайдеру тоже шел входящий звонок — гасим его!
+                        if (secStatus == COLOR_INCOMING) {
+                            Log.d(TAG, "[АВТО-ОТБОЙ] Гасим параллельный вызов от: " + secondaryTarget);
+
+                            // 1. Сбрасываем визуальное состояние второго слайдера на экране
+                            secondarySeekBar.setProgress(0);
+                            secondarySeekBar.setTag(COLOR_NEUTRAL);
+                            setSliderTrackColor(secondarySeekBar, COLOR_NEUTRAL);
+
+                            // 2. Шлем второму вызывающему REJECT в сеть, чтобы его телефон успокоился
+                            final String finalSecTarget = secondaryTarget;
+                            new Thread(() -> {
+                                try {
+                                    sendCallPacket("COMMAND_CALL_REJECT:" + currentLoggedInRole + "-" + finalSecTarget);
+                                    Log.d(TAG, "[АВТО-ОТБОЙ] Отправлен REJECT через сокет для: " + finalSecTarget);
+                                } catch (Exception e) {
+                                    Log.e(TAG, "[АВТО-ОТБОЙ] Ошибка отправки авто-отбоя: ", e);
+                                }
+                            }).start();
+                        }
+                    }
+                    // =================================================================
+
+                } else {
+                    seekBar.setTag(COLOR_OUTGOING);
+                    setSliderTrackColor(seekBar, COLOR_OUTGOING);
+
+                    sendCallPacket(target);
+                }
+            }
+            else {
+                if (currentStatus == COLOR_INCOMING) {
+                    seekBar.setProgress(50);
+                    setSliderTrackColor(seekBar, COLOR_INCOMING);
+                } else if (currentStatus == COLOR_ACTIVE || currentStatus == COLOR_OUTGOING) {
+                    seekBar.setProgress(100);
+                    setSliderTrackColor(seekBar, currentStatus);
+                } else {
+                    seekBar.setProgress(0);
+                    setSliderTrackColor(seekBar, COLOR_NEUTRAL);
+                }
+            }
+        }
+    };
 
     private void startVoiceCommunication(String targetRoom) {
         if (isSfxRunning) {
