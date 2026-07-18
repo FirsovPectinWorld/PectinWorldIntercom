@@ -46,6 +46,8 @@ import android.os.Build;
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "AUDIO2_SERVICE";
 
+    private boolean ringtoneStarted = false;
+
     private LinearLayout loginBlock, intercomBlock;
     private EditText passwordInput;
     private Button loginButton, btnGeneralCall;
@@ -67,7 +69,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int COLOR_OUTGOING = 0xFF29B6F6; // 4. Исходящий вызов (Светло-голубой)
     private static final int COLOR_THUMB = 0xFF1B5E20;    // 5. Ползунок: Наш фирменный темно-зеленый
 
-    private static final String SERVER_HOST = "90.171.130.20";
+    private static final String SERVER_HOST = "95.214.62.90";
     private static final int SERVER_PORT = 64738;
 
     private static final int SAMPLE_RATE = 48000;
@@ -84,6 +86,25 @@ public class MainActivity extends AppCompatActivity {
     private int diagnosticCounter = 0;
 
     DataOutputStream dos = null;
+
+    // Глобальный массив состояний (все 6 слайдеров системы)
+    // По умолчанию все в состоянии 0 (Покой)
+    private int[] sliderMatrix = new int[6];
+
+    // Четкие индексы для каждого слайдера в системе
+    private static final int IDX_VLADIMIR_GALINA = 0; // Слайдер на экране Владимира к Галине
+    private static final int IDX_VLADIMIR_SERGEY = 1; // Слайдер на экране Владимира к Сергею
+
+    private static final int IDX_GALINA_VLADIMIR = 2; // Слайдер на экране Галины к Владимиру
+    private static final int IDX_GALINA_SERGEY    = 3; // Слайдер на экране Галины к Сергею
+
+    private static final int IDX_SERGEY_VLADIMIR = 4; // Слайдер на экране Сергея к Владимиру
+    private static final int IDX_SERGEY_GALINA   = 5; // Слайдер на экране Сергея к Галине
+
+    private static final int ST_IDLE = 0;      // Покой
+    private static final int ST_OUTGOING = 1;  // Я вызываю
+    private static final int ST_INCOMING = 2;  // Меня вызывают
+    private static final int ST_CONNECTED = 3; // В разговоре
 
     // ДИНАМИЧЕСКИЙ ПУЛ ДЕКОДЕРОВ
     private HashMap<Integer, MediaCodec> decoderPool = new HashMap<>();
@@ -162,9 +183,6 @@ public class MainActivity extends AppCompatActivity {
                 //Log.d("INTERCOM_MAIN", "Разрешение POST_NOTIFICATIONS уже есть.");
             }
         }
-
-
-
     }
 
     @Override
@@ -346,30 +364,24 @@ public class MainActivity extends AppCompatActivity {
             }
 
             if (progress <= 5) {
-                Log.d(TAG, "[СЛАЙДЕР] Сброс/Отбой разговора. Текущий статус: " + currentStatus);
+                // Log.d(TAG, "[СЛАЙДЕР] Сброс/Отбой разговора. Текущий статус: " + currentStatus);
 
                 if (currentStatus == COLOR_INCOMING || currentStatus == COLOR_OUTGOING || currentStatus == COLOR_ACTIVE) {
-
                     final String finalTarget = target;
 
                     new Thread(() -> {
                         try {
                             sendCallPacket("COMMAND_CALL_REJECT:" + currentLoggedInRole + "-" + finalTarget);
-                            Log.d(TAG, "[ОТБОЙ ТЕСТ] Отправлен REJECT через изолированный сокет для: " + finalTarget);
+                            // Log.d(TAG, "[ОТБОЙ ТЕСТ] Отправлен REJECT через изолированный сокет для: " + finalTarget);
                         } catch (Exception e) {
-                            Log.e(TAG, "[ОТБОЙ ТЕСТ] Ошибка отправки пакета: ", e);
+                            // Log.e(TAG, "[ОТБОЙ ТЕСТ] Ошибка отправки пакета: ", e);
                         }
                     }).start();
                 }
 
-                // Настройки применяются к тому слайдеру, который сейчас дернули
-                seekBar.setProgress(0);
-                seekBar.setTag(COLOR_NEUTRAL);
-                setSliderTrackColor(seekBar, COLOR_NEUTRAL);
-
-                Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
-                sendBroadcast(stopIntent);
-                stopAudio();
+                // === УБРАНО ЛОКАЛЬНОЕ УПРАВЛЕНИЕ ===
+                // Никаких seekBar.setProgress(0), stopAudio() и sendBroadcast здесь быть не должно!
+                // Всё это сделает "Мозг" (syncInterfaceAndAudioWithMatrix), когда сервер вернет эхо пакета.
             }
             else if (progress >= 95) {
                 seekBar.setProgress(100);
@@ -382,7 +394,7 @@ public class MainActivity extends AppCompatActivity {
                     sendBroadcast(stopIntent);
 
                     sendAcceptPacket(target);
-                    startVoiceCommunication("Room_One");
+                    //startVoiceCommunication("Room_One");
 
                     // =================================================================
                     // АВТОМАТИЧЕСКИЙ СБРОС ВТОРОГО ВЫЗОВА (ЕСЛИ ОН БЫЛ)
@@ -406,7 +418,7 @@ public class MainActivity extends AppCompatActivity {
 
                         // Если по второму слайдеру тоже шел входящий звонок — гасим его!
                         if (secStatus == COLOR_INCOMING) {
-                            Log.d(TAG, "[АВТО-ОТБОЙ] Гасим параллельный вызов от: " + secondaryTarget);
+                            //Log.d(TAG, "[АВТО-ОТБОЙ] Гасим параллельный вызов от: " + secondaryTarget);
 
                             // 1. Сбрасываем визуальное состояние второго слайдера на экране
                             secondarySeekBar.setProgress(0);
@@ -418,9 +430,9 @@ public class MainActivity extends AppCompatActivity {
                             new Thread(() -> {
                                 try {
                                     sendCallPacket("COMMAND_CALL_REJECT:" + currentLoggedInRole + "-" + finalSecTarget);
-                                    Log.d(TAG, "[АВТО-ОТБОЙ] Отправлен REJECT через сокет для: " + finalSecTarget);
+                                    //Log.d(TAG, "[АВТО-ОТБОЙ] Отправлен REJECT через сокет для: " + finalSecTarget);
                                 } catch (Exception e) {
-                                    Log.e(TAG, "[АВТО-ОТБОЙ] Ошибка отправки авто-отбоя: ", e);
+                                    //Log.e(TAG, "[АВТО-ОТБОЙ] Ошибка отправки авто-отбоя: ", e);
                                 }
                             }).start();
                         }
@@ -597,7 +609,7 @@ public class MainActivity extends AppCompatActivity {
                             }
                             //Log.d("AUDIO2", "Валидный пакет Authenticate отправлен.");
                         }
-                        else if (msgType == 9) { // Текстовое сообщение во время активного звонка
+                        else if (msgType == 11) { // Текстовое сообщение во время активного звонка
                             try {
                                 int idx = 0;
                                 String incomingText = "";
@@ -731,7 +743,7 @@ public class MainActivity extends AppCompatActivity {
                 }
 
             } catch (Exception e) {
-                //Log.e("AUDIO2", "Error in voice thread", e);
+                Log.e(TAG, "Error in voice thread", e);
             } finally {
                 stopAudio();
                 try { if (tcpSocket != null) tcpSocket.close(); } catch (Exception e) {}
@@ -980,96 +992,71 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // НОВЫЙ МЕТОД: Отправка короткого фонового текстового пакета вызова [CALL]
+    // НОВЫЙ МЕТОД: Отправка команды в сеть и создание локального эха для себя
     private void sendCallPacket(String targetName) {
-        new Thread(() -> {
-            try {
-                //Log.d("AUDIO2", "=== ВЫЗОВ: Начало отправки для " + targetName + " ===");
+        String finalPayload;
+        if (targetName.contains(":")) {
+            // Если прилетела уже готовая команда (ACCEPT/REJECT)
+            finalPayload = targetName;
+        } else {
+            // Если прилетело просто имя, собираем чистую команду вызова
+            finalPayload = "COMMAND_CALL_START:" + currentLoggedInRole + "-" + targetName;
+        }
 
-                TrustManager[] trustAllCerts = new TrustManager[]{
-                        new X509TrustManager() {
-                            public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
-                            public void checkClientTrusted(X509Certificate[] certs, String authType) {}
-                            public void checkServerTrusted(X509Certificate[] certs, String authType) {}
-                        }
-                };
-                SSLContext sc = SSLContext.getInstance("TLS");
-                sc.init(null, trustAllCerts, new java.security.SecureRandom());
-                SSLSocket callSocket = (SSLSocket) sc.getSocketFactory().createSocket(SERVER_HOST, SERVER_PORT);
-                callSocket.setEnabledProtocols(new String[]{"TLSv1.2", "TLSv1.3"});
-                callSocket.startHandshake();
+        Log.d(TAG, "[UI] Передаем команду в Сервис: " + finalPayload);
 
-                DataOutputStream callDos = new DataOutputStream(callSocket.getOutputStream());
-                DataInputStream callDis = new DataInputStream(callSocket.getInputStream());
+        // 1. Отправляем команду в сеть (чтобы ее услышал собеседник)
+        Intent cmdIntent = new Intent("com.pectinworld.intercom.SEND_COMMAND");
+        cmdIntent.putExtra("PAYLOAD", finalPayload);
+        sendBroadcast(cmdIntent);
 
-                // 1. Отправка пакета Version
-                ByteArrayOutputStream vOs = new ByteArrayOutputStream();
-                vOs.write(0x08); writeVarIntStream(vOs, 66047);
-                vOs.write(0x28); writeVarIntLongStream(vOs, 281496451547136L);
-                vOs.write(0x12); byte[] relBytes = "1.5.0".getBytes("UTF-8");
-                writeVarIntStream(vOs, relBytes.length); vOs.write(relBytes);
-                vOs.write(0x1A); byte[] osBytes = "Win32".getBytes("UTF-8");
-                writeVarIntStream(vOs, osBytes.length); vOs.write(osBytes);
-                vOs.write(0x22); byte[] osv = "Android".getBytes("UTF-8");
-                writeVarIntStream(vOs, osv.length); vOs.write(osv);
-                byte[] verBody = vOs.toByteArray();
-                callDos.writeShort(0); callDos.writeInt(verBody.length); callDos.write(verBody); callDos.flush();
+        // 2. Мгновенно применяем команду к себе (Сервер Mumble не пришлет нам наше же сообщение)
+        simulateNetworkEchoLocally(finalPayload);
+    }
 
-                // Динамическое определение содержимого команды
-                String finalPayload;
-                if (targetName.contains(":")) {
-                    // Если прилетела уже готовая команда (ACCEPT/REJECT), отправляем её в чистом виде
-                    finalPayload = targetName;
-                } else {
-                    // Если прилетело просто имя (например, "Галина"), собираем чистую команду вызова с дефисом
-                    finalPayload = "COMMAND_CALL_START:" + currentLoggedInRole + "-" + targetName;
+    // НОВЫЙ МЕТОД: Централизованное обновление Матрицы без ожидания сервера
+    private void simulateNetworkEchoLocally(String payload) {
+        String action = null;
+        String addressData = null;
+
+        // Разбираем собственную отправленную команду так же, как это делает парсер сети
+        if (payload.startsWith("COMMAND_CALL_START:")) {
+            action = "com.pectinworld.intercom.INCOMING_CALL";
+            addressData = payload.substring("COMMAND_CALL_START:".length()).trim();
+        } else if (payload.startsWith("COMMAND_CALL_ACCEPT:")) {
+            action = "com.pectinworld.intercom.CALL_ACCEPTED";
+            addressData = payload.substring("COMMAND_CALL_ACCEPT:".length()).trim();
+        } else if (payload.startsWith("COMMAND_CALL_REJECT:")) {
+            action = "com.pectinworld.intercom.CALL_REJECTED";
+            addressData = payload.substring("COMMAND_CALL_REJECT:".length()).trim();
+        } else if (payload.startsWith("COMMAND_EXIT:")) {
+            action = "com.pectinworld.intercom.CALL_REJECTED";
+            addressData = payload.substring("COMMAND_EXIT:".length()).trim();
+        }
+
+        // Если команда валидна, кидаем Broadcast в собственный incomingCallReceiver
+        if (action != null && addressData != null) {
+            String sender = "";
+            String receiver = "";
+
+            if (addressData.contains("-")) {
+                String[] parts = addressData.split("-");
+                if (parts.length == 2) {
+                    sender = parts[0].trim();
+                    receiver = parts[1].trim();
                 }
-
-                // 2. Отправка пакета Authenticate с очищенной строкой команды
-                String callUser = finalPayload;
-                String serverPassword = "PectinWorldIntercom1970";
-                ByteArrayOutputStream aOs = new ByteArrayOutputStream();
-                aOs.write(0x0A); byte[] uBytes = callUser.getBytes("UTF-8"); writeVarIntStream(aOs, uBytes.length); aOs.write(uBytes);
-                aOs.write(0x12); byte[] pBytes = serverPassword.getBytes("UTF-8"); writeVarIntStream(aOs, pBytes.length); aOs.write(pBytes);
-                aOs.write(0x1A); byte[] tBytes = serverPassword.getBytes("UTF-8"); writeVarIntStream(aOs, tBytes.length); aOs.write(tBytes);
-                byte[] authBody = aOs.toByteArray();
-                callDos.writeShort(2); callDos.writeInt(authBody.length); callDos.write(authBody); callDos.flush();
-                callDos.writeShort(3); callDos.writeInt(0); callDos.flush();
-
-                // Ожидаем ServerSync (Тип 5)
-                while (true) {
-                    int msgType = callDis.readUnsignedShort();
-                    int msgLength = callDis.readInt();
-                    byte[] msgData = new byte[msgLength];
-                    callDis.readFully(msgData);
-                    if (msgType == 5) break;
-                }
-
-                // 3. Отправка Protobuf TextMessage (Тип 11) с единым разделителем дефисом (-)
-                String callMessage = finalPayload;
-                byte[] msgStringBytes = callMessage.getBytes("UTF-8");
-
-                ByteArrayOutputStream txOs = new ByteArrayOutputStream();
-                txOs.write(0x18); txOs.write(1); // Поле №3: channel_id (ID комнаты = 1)
-
-                txOs.write(0x2A);
-                writeVarIntStream(txOs, msgStringBytes.length); // Используем твой varint для длины строки
-                txOs.write(msgStringBytes); // Поле №5: message
-
-                byte[] txBody = txOs.toByteArray();
-
-                callDos.writeShort(11); // ID типа сообщения TextMessage в протоколе Mumble
-                callDos.writeInt(txBody.length);
-                callDos.write(txBody);
-                callDos.flush();
-
-                callSocket.close();
-                //Log.d("AUDIO2", "=== ВЫЗОВ: Адресный пакет '" + callMessage + "' успешно отправлен ===");
-
-            } catch (Exception e) {
-                //Log.e("AUDIO2", "!!! ВЫЗОВ: Ошибка отправки: " + e.getMessage());
+            } else {
+                sender = addressData.trim();
+                receiver = "ALL";
             }
-        }).start();
+
+            if (!sender.isEmpty()) {
+                Intent matrixIntent = new Intent(action);
+                matrixIntent.putExtra("SENDER_NAME", sender);
+                matrixIntent.putExtra("RECEIVER_NAME", receiver);
+                sendBroadcast(matrixIntent); // Эмулируем прилет пакета из сети
+            }
+        }
     }
 
     private void sendAcceptPacket(String target) {
@@ -1204,47 +1191,201 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
-            //Log.d(TAG, "[АКТИВИТИ] Получен бродкаст экшен: " + action);
+            if (action == null) return;
 
-            if ("com.pectinworld.intercom.INCOMING_CALL".equals(action)) {
-                String callerName = intent.getStringExtra("CALLER_NAME");
-                if (callerName != null) {
-                    handleIncomingCallFromIntent(callerName);
+            String sender = intent.getStringExtra("SENDER_NAME");
+            String receiver = intent.getStringExtra("RECEIVER_NAME");
+
+            if (sender != null && receiver != null) {
+                if ("com.pectinworld.intercom.INCOMING_CALL".equals(action)) {
+                    updateMatrixByNames(sender, receiver, "START");
+                }
+                else if ("com.pectinworld.intercom.CALL_ACCEPTED".equals(action)) {
+                    updateMatrixByNames(sender, receiver, "ACCEPT");
+                }
+                else if ("com.pectinworld.intercom.CALL_REJECTED".equals(action)) {
+                    if ("ALL".equalsIgnoreCase(receiver)) {
+                        // Одиночный сброс (COMMAND_EXIT) сбрасывает все связи этого человека
+                        updateMatrixByNames(sender, "Владимир", "REJECT");
+                        updateMatrixByNames(sender, "Галина", "REJECT");
+                        updateMatrixByNames(sender, "Сергей", "REJECT");
+                    } else {
+                        updateMatrixByNames(sender, receiver, "REJECT");
+                    }
                 }
             }
-            else if ("com.pectinworld.intercom.CALL_ACCEPTED".equals(action)) {
-                //Log.d(TAG, "[АКТИВИТИ] Собеседник принял вызов! Переключаем на ЛИМОННЫЙ и включаем звук.");
-                runOnUiThread(() -> {
-                    if (seekContactOne != null && (int)seekContactOne.getTag() == COLOR_OUTGOING) {
-                        seekContactOne.setTag(COLOR_ACTIVE);
-                        setSliderTrackColor(seekContactOne, COLOR_ACTIVE);
-                    } else if (seekContactTwo != null && (int)seekContactTwo.getTag() == COLOR_OUTGOING) {
-                        seekContactTwo.setTag(COLOR_ACTIVE);
-                        setSliderTrackColor(seekContactTwo, COLOR_ACTIVE);
-                    }
-                    startVoiceCommunication("Room_One");
-                });
-            }
-            else if ("com.pectinworld.intercom.CALL_REJECTED".equals(action)) {
-                //Log.d(TAG, "[АКТИВИТИ] Вызов отклонен или сброшен собеседником. Возврат в покой (Желтый).");
-                runOnUiThread(() -> {
-                    SeekBar activeBar = null;
-                    if (seekContactOne != null && ((int)seekContactOne.getTag() == COLOR_OUTGOING || (int)seekContactOne.getTag() == COLOR_ACTIVE || (int)seekContactOne.getTag() == COLOR_INCOMING)) {
-                        activeBar = seekContactOne;
-                    } else if (seekContactTwo != null && ((int)seekContactTwo.getTag() == COLOR_OUTGOING || (int)seekContactTwo.getTag() == COLOR_ACTIVE || (int)seekContactTwo.getTag() == COLOR_INCOMING)) {
-                        activeBar = seekContactTwo;
-                    }
 
-                    if (activeBar != null) {
-                        activeBar.setProgress(0);
-                        activeBar.setTag(COLOR_NEUTRAL);
-                        setSliderTrackColor(activeBar, COLOR_NEUTRAL);
-                    }
-                    stopAudio();
-                });
-            }
+            // После любого изменения матрицы — запускаем перерасчет UI и Звука!
+            syncInterfaceAndAudioWithMatrix();
         }
     };
+
+    // 1. Печать состояния матрицы в логcat
+    private void logSliderMatrix(String triggerSource) {
+        String[] states = {"IDLE", "OUTGOING", "INCOMING", "CONNECTED"};
+        Log.d(TAG, String.format(
+                "[%s] ВГ:%s | ВС:%s || ГВ:%s | ГС:%s || СВ:%s | СГ:%s",
+                triggerSource,
+                states[sliderMatrix[0]], states[sliderMatrix[1]],
+                states[sliderMatrix[2]], states[states[sliderMatrix[3]] != null ? sliderMatrix[3] : 0],
+                states[sliderMatrix[4]], states[sliderMatrix[5]]
+        ));
+    }
+
+    // 2. Универсальный определитель индексов и переключатель матрицы
+    private void updateMatrixByNames(String realSender, String realReceiver, String action) {
+        if (realSender == null || realReceiver == null) return;
+
+        String f = realSender.trim().toLowerCase();
+        String t = realReceiver.trim().toLowerCase();
+
+        int idxFromTo = -1;
+        int idxToFrom = -1;
+
+        if (f.contains("владимир") && t.contains("галина")) { idxFromTo = 0; idxToFrom = 2; }
+        else if (f.contains("владимир") && t.contains("сергей")) { idxFromTo = 1; idxToFrom = 4; }
+        else if (f.contains("галина") && t.contains("владимир")) { idxFromTo = 2; idxToFrom = 0; }
+        else if (f.contains("галина") && t.contains("сергей")) { idxFromTo = 3; idxToFrom = 5; }
+        else if (f.contains("сергей") && t.contains("владимир")) { idxFromTo = 4; idxToFrom = 1; }
+        else if (f.contains("сергей") && t.contains("галина")) { idxFromTo = 5; idxToFrom = 3; }
+
+        if (idxFromTo == -1) return;
+
+        if ("START".equalsIgnoreCase(action)) {
+            sliderMatrix[idxFromTo] = 1; // Инициатор -> OUTGOING
+            sliderMatrix[idxToFrom] = 2; // Получатель -> INCOMING
+        }
+        else if ("ACCEPT".equalsIgnoreCase(action)) {
+            sliderMatrix[idxFromTo] = 3; // Оба -> CONNECTED
+            sliderMatrix[idxToFrom] = 3;
+        }
+        else if ("REJECT".equalsIgnoreCase(action) || "EXIT".equalsIgnoreCase(action)) {
+            sliderMatrix[idxFromTo] = 0; // Сброс -> IDLE
+            sliderMatrix[idxToFrom] = 0;
+        }
+
+        logSliderMatrix("СЕТЬ:" + action);
+    }
+
+    // 3. Центральный Мозг пересчета графики и звука
+    private void syncInterfaceAndAudioWithMatrix() {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                int stateSliderOne = 0;
+                int stateSliderTwo = 0;
+
+                String me = (currentLoggedInRole != null) ? currentLoggedInRole.trim().toLowerCase() : "unknown";
+
+                // Вытаскиваем состояния НАШИХ ползунков
+                if (me.contains("владимир")) {
+                    stateSliderOne = sliderMatrix[0]; // ВГ
+                    stateSliderTwo = sliderMatrix[1]; // ВС
+                } else if (me.contains("галина")) {
+                    stateSliderOne = sliderMatrix[2]; // ГВ
+                    stateSliderTwo = sliderMatrix[3]; // ГС
+                } else if (me.contains("сергей")) {
+                    stateSliderOne = sliderMatrix[4]; // СВ
+                    stateSliderTwo = sliderMatrix[5]; // СГ
+                }
+
+                // Красим ползунки
+                updateSliderUIByState(seekContactOne, stateSliderOne);
+                updateSliderUIByState(seekContactTwo, stateSliderTwo);
+
+                // Логируем ВСЮ матрицу для проверки её реального наполнения
+                Log.d("AUDIO2_SERVICE", "[МАТРИЦА СЫРЫЕ ДАННЫЕ] " + java.util.Arrays.toString(sliderMatrix));
+
+                // =========================================================================
+                // ГОЛОС (КОДЕКИ)
+                // =========================================================================
+                boolean needVoice = (stateSliderOne == 3 || stateSliderTwo == 3);
+                if (needVoice) {
+                    // ИСПОЛЬЗУЕМ isSfxRunning для мгновенной защиты от двойного запуска
+                    if (!isSfxRunning) {
+                        Log.d("AUDIO2_SERVICE", "[МОЗГ ГОЛОС] Беседа активна. Включаем аудио.");
+                        startVoiceCommunication("Room_One");
+                    }
+                } else {
+                    if (isSfxRunning) {
+                        Log.d("AUDIO2_SERVICE", "[МОЗГ ГОЛОС] Беседа завершена. Выключаем аудио.");
+                        stopAudio();
+                    }
+                }
+
+                // =========================================================================
+                // РИНГТОН: Проверяем, звонит ли кто-то лично мне (Состояние 2 - INCOMING)
+                // И проверяем по индексам матрицы напрямую, без завязки на текст роли!
+                // =========================================================================
+                // =========================================================================
+                // РИНГТОН: Звонят ли ЛИЧНО МНЕ прямо сейчас? (Поведение на основе логов)
+                // =========================================================================
+                boolean amIReceivingCall = false;
+
+                if (me.contains("владимир")) {
+                    // Из логов: когда Владимиру звонят Галина или Сергей,
+                    // активными входящими становятся каналы ВГ (индекс 0) и ВС (индекс 1)
+                    if (sliderMatrix[0] == 2 || sliderMatrix[1] == 2) amIReceivingCall = true;
+
+                } else if (me.contains("галина")) {
+                    // Из логов: когда Владимир звонит Галине, загорается ГВ (индекс 2)
+                    // Если Сергей звонит Галине — загорится ГС (индекс 3)
+                    if (sliderMatrix[2] == 2 || sliderMatrix[3] == 2) amIReceivingCall = true;
+
+                } else if (me.contains("сергей")) {
+                    // Из логов: когда Владимир звонит Сергею, загорается СВ (индекс 4)
+                    // Если Галина звонит Сергею — загорится СГ (индекс 5)
+                    if (sliderMatrix[4] == 2 || sliderMatrix[5] == 2) amIReceivingCall = true;
+                }
+
+                Log.d("AUDIO2_SERVICE", "[МОЗГ ЗВУК] Моя роль: " + me + " -> Мне звонят (исправлено): " + amIReceivingCall);
+
+                // МЕНЕДЖЕР РИНГТОНА
+                if (amIReceivingCall) {
+                    if (!ringtoneStarted) {
+                        Log.d("AUDIO2_SERVICE", "[МОЗГ РИНГТОН] Детект звонка. ВКЛЮЧАЕМ ЗВУК.");
+                        ringtoneStarted = true;
+
+                        Intent startSound = new Intent("com.pectinworld.intercom.START_CALL_EFFECTS");
+                        sendBroadcast(startSound);
+                    }
+                } else {
+                    // Без условий: если вызовов к нам нет, жестко тушим звук везде
+                    Log.d("AUDIO2_SERVICE", "[МОЗГ РИНГТОН] Входящих вызовов нет. ВЫКЛЮЧАЕМ ЗВУК.");
+                    ringtoneStarted = false;
+
+                    Intent stopSound = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
+                    sendBroadcast(stopSound);
+                }
+            }
+        });
+    }
+
+    private void updateSliderUIByState(SeekBar seekBar, int state) {
+        if (seekBar == null) return;
+        switch (state) {
+            case 0:
+                seekBar.setTag(COLOR_NEUTRAL);
+                setSliderTrackColor(seekBar, COLOR_NEUTRAL);
+                seekBar.setProgress(0);
+                break;
+            case 1:
+                seekBar.setTag(COLOR_OUTGOING);
+                setSliderTrackColor(seekBar, COLOR_OUTGOING);
+                seekBar.setProgress(100);
+                break;
+            case 2:
+                seekBar.setTag(COLOR_INCOMING);
+                setSliderTrackColor(seekBar, COLOR_INCOMING);
+                seekBar.setProgress(50);
+                break;
+            case 3:
+                seekBar.setTag(COLOR_ACTIVE);
+                setSliderTrackColor(seekBar, COLOR_ACTIVE);
+                seekBar.setProgress(100);
+                break;
+        }
+    }
 
     @Override
     protected void onResume() {

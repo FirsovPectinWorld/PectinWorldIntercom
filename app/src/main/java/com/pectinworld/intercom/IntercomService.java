@@ -37,7 +37,7 @@ public class IntercomService extends Service {
 
     private String cachedUserRole = "Unknown";
 
-    private static final String SERVER_HOST = "90.171.130.20";
+    private static final String SERVER_HOST = "95.214.62.90";
     private static final int SERVER_PORT = 64738;
 
     @Override
@@ -46,10 +46,17 @@ public class IntercomService extends Service {
         createNotificationChannel();
         notificationManager = (android.app.NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
 
-        // Регистрируем ресивер только для остановки звуков
-        android.content.IntentFilter filter = new android.content.IntentFilter(ACTION_STOP_CALL_EFFECTS);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            registerReceiver(callCommandReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        // Регистрируем ресивер для команд от Мозга (Активити)
+        android.content.IntentFilter filter = new android.content.IntentFilter();
+        filter.addAction(ACTION_STOP_CALL_EFFECTS); // com.pectinworld.intercom.STOP_CALL_EFFECTS
+
+        // ХИТРАЯ СТРОЧКА: Добавляем экшен для старта рингтона
+        filter.addAction("com.pectinworld.intercom.START_CALL_EFFECTS");
+
+        filter.addAction("com.pectinworld.intercom.SEND_COMMAND");
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            registerReceiver(callCommandReceiver, filter, Context.RECEIVER_EXPORTED);
         } else {
             registerReceiver(callCommandReceiver, filter);
         }
@@ -58,9 +65,16 @@ public class IntercomService extends Service {
     private final android.content.BroadcastReceiver callCommandReceiver = new android.content.BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (ACTION_STOP_CALL_EFFECTS.equals(intent.getAction())) {
-                //Log.d(TAG, "[СЕРВИС] Получена команда на остановку эффектов вызова - 1.");
+            String action = intent.getAction();
+            if ("com.pectinworld.intercom.STOP_CALL_EFFECTS".equals(action)) {
                 stopCallEffects();
+            } else if ("com.pectinworld.intercom.START_CALL_EFFECTS".equals(action)) {
+                playNotificationSound(); // Физический запуск рингтона в сервисе
+            } else if ("com.pectinworld.intercom.SEND_COMMAND".equals(action)) {
+                String payload = intent.getStringExtra("PAYLOAD");
+                if (payload != null) {
+                    sendCommandDirectly(payload);
+                }
             }
         }
     };
@@ -76,7 +90,16 @@ public class IntercomService extends Service {
             // 2. Сначала проверяем, не прилетел ли интент на отправку EXIT
             if ("com.pectinworld.intercom.SEND_EXIT".equals(action)) {
                 String target = intent.getStringExtra("TARGET_NAME");
-                sendExitCommandDirectly(target);
+                String myRole = (cachedUserRole != null) ? cachedUserRole.trim() : "Unknown";
+                // Используем наш новый правильный метод!
+                sendCommandDirectly("COMMAND_EXIT:" + myRole + "-" + target);
+            }
+
+            if ("com.pectinworld.intercom.SEND_COMMAND".equals(action)) {
+                String payload = intent.getStringExtra("PAYLOAD");
+                if (payload != null) {
+                    sendCommandDirectly(payload);
+                }
             }
 
             // 3. Отдельно проверяем, прислали ли нам обновление роли
@@ -114,6 +137,48 @@ public class IntercomService extends Service {
         }
 
         return START_STICKY;
+    }
+
+    // Универсальный метод отправки команды через официальное текстовое сообщение
+    public void sendCommandDirectly(String payload) {
+        new Thread(() -> {
+            try {
+                if (dos != null && tcpSocket != null && !tcpSocket.isClosed() && tcpSocket.isConnected()) {
+                    byte[] msgStringBytes = payload.getBytes("UTF-8");
+                    ByteArrayOutputStream txOs = new ByteArrayOutputStream();
+
+                    // 1. Строго указываем Корневую комнату (ID = 0), где находятся все сервисы
+                    // Tag 3 (channel_id), wireType 0 -> 3 << 3 | 0 = 24 = 0x18
+                    txOs.write(0x18);
+                    txOs.write(0);
+
+                    // 2. Добавляем текст команды
+                    // Tag 5 (message), wireType 2 -> 5 << 3 | 2 = 40 | 2 = 42 = 0x2A
+                    txOs.write(0x2A);
+
+                    int length = msgStringBytes.length;
+                    while ((length & 0xFFFFFF80) != 0L) {
+                        txOs.write((length & 0x7F) | 0x80);
+                        length >>>= 7;
+                    }
+                    txOs.write(length & 0x7F);
+                    txOs.write(msgStringBytes);
+
+                    byte[] txBody = txOs.toByteArray();
+
+                    // Отправляем легальный пакет Тип 11 (TextMessage)
+                    synchronized (dos) {
+                        dos.writeShort(11);
+                        dos.writeInt(txBody.length);
+                        dos.write(txBody);
+                        dos.flush();
+                    }
+                    Log.d(TAG, "[СЕРВИС] Текстовая команда успешно ушла в Root канал: " + payload);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Ошибка прямой отправки команды: " + e.getMessage());
+            }
+        }).start();
     }
 
     private void startNetworkLoop() {
@@ -241,8 +306,8 @@ public class IntercomService extends Service {
                                 syncIntent.putExtra("action", "SERVER_CONNECTED");
                                 sendBroadcast(syncIntent);
                             }
-                            else if (msgType == 9) { // Текстовое сообщение (Mumble TextMessage)
-                                Log.d(TAG, "[СЕТЬ СЫРОЙ ПАКЕТ 9] Прилетел пакет тип 9. Длина msgLen = " + msgLen + " байт. Актуальный cachedUserRole = " + cachedUserRole);
+                            else if (msgType == 11) { // Текстовое сообщение (Mumble TextMessage)
+                                //Log.d(TAG, "[СЕТЬ СЫРОЙ ПАКЕТ 9] Прилетел пакет тип 9. Длина msgLen = " + msgLen + " байт. Актуальный cachedUserRole = " + cachedUserRole);
                                 String incomingText = "";
                                 //Log.d(TAG, "Размер тела пакета Тип 9: " + msgBody.length + " байт");
 
@@ -268,7 +333,7 @@ public class IntercomService extends Service {
                                             if (idx + len <= msgBody.length) {
                                                 // Извлекаем абсолютно любую строку, пришедшую в поле text
                                                 String extractedStr = new String(msgBody, idx, len, "UTF-8").trim();
-                                                Log.d(TAG, "[ПАРСЕР ПАКЕТА 9] Найдена строка (Тег " + tag + "): '" + extractedStr + "'");
+                                                //Log.d(TAG, "[ПАРСЕР ПАКЕТА 9] Найдена строка (Тег " + tag + "): '" + extractedStr + "'");
 
                                                 if (!extractedStr.isEmpty()) {
                                                     incomingText = extractedStr;
@@ -292,29 +357,24 @@ public class IntercomService extends Service {
 
                                     //String myRole = (cachedUserRole != null) ? cachedUserRole.trim() : "Unknown";
 
-                                    // === НАЧАЛО ОБРАБОТКИ ВСЕХ КОМАНД ВЫЗОВА В СЕРВИСЕ ===
+// === НАЧАЛО ОБРАБОТКИ ВСЕХ КОМАНД ВЫЗОВА В СЕРВИСЕ ===
                                     String incomingCmd = null;
                                     String addressData = null;
 
-                                    Log.d(TAG, "[СЕТЬ РАЗГОВОР] Прилетел пакет: " + incomingText);
+                                    //Log.d(TAG, "[СЕТЬ РАЗГОВОР] Прилетел пакет: " + incomingText);
 
-                                    if (incomingText.contains("COMMAND_CALL_START:")) {
+                                    if (incomingText.startsWith("COMMAND_CALL_START:")) {
                                         incomingCmd = "START";
-                                        addressData = incomingText.replace("COMMAND_CALL_START:", "").trim();
-                                    } else if (incomingText.contains("COMMAND_CALL_ACCEPT:")) {
+                                        addressData = incomingText.substring("COMMAND_CALL_START:".length()).trim();
+                                    } else if (incomingText.startsWith("COMMAND_CALL_ACCEPT:")) {
                                         incomingCmd = "ACCEPT";
-                                        //Log.d(TAG, "[СЕРВИС] Получена команда на остановку эффектов вызова - 5.");
-                                        stopCallEffects();
-                                        addressData = incomingText.replace("COMMAND_CALL_ACCEPT:", "").trim();
-                                    } else if (incomingText.contains("COMMAND_CALL_REJECT:")) {
+                                        addressData = incomingText.substring("COMMAND_CALL_ACCEPT:".length()).trim();
+                                    } else if (incomingText.startsWith("COMMAND_CALL_REJECT:")) {
                                         incomingCmd = "REJECT";
-                                        //Log.d(TAG, "[СЕРВИС] Получена команда на остановку эффектов вызова - 6.");
-                                        stopCallEffects();
-                                        addressData = incomingText.replace("COMMAND_CALL_REJECT:", "").trim();
-                                    } else if (incomingText.contains("COMMAND_EXIT:")) {
-                                        // КТО-ТО ПОВЕСИЛ ТРУБКУ ИЛИ СБРОСИЛ РАЗГОВОР
+                                        addressData = incomingText.substring("COMMAND_CALL_REJECT:".length()).trim();
+                                    } else if (incomingText.startsWith("COMMAND_EXIT:")) {
                                         incomingCmd = "EXIT";
-                                        addressData = incomingText.replace("COMMAND_EXIT:", "").trim();
+                                        addressData = incomingText.substring("COMMAND_EXIT:".length()).trim();
                                     } else if (incomingText.contains("-") && !incomingText.contains(":")) {
                                         incomingCmd = "START";
                                         addressData = incomingText.trim();
@@ -323,58 +383,47 @@ public class IntercomService extends Service {
                                     if (incomingCmd != null && addressData != null) {
                                         String sender = "";
                                         String receiver = "";
-                                        boolean isTargetMe = false;
-                                        String myRole = (cachedUserRole != null) ? cachedUserRole.trim() : "Unknown";
 
-                                        // Для команд START, ACCEPT, REJECT у нас формат "От-Кому"
+                                        // Разделяем строку "Владимир-Галина" на Отправителя и Получателя
                                         if (addressData.contains("-")) {
                                             String[] parts = addressData.split("-");
                                             if (parts.length == 2) {
                                                 sender = parts[0].trim();
                                                 receiver = parts[1].trim();
-                                                isTargetMe = myRole.equalsIgnoreCase(receiver);
                                             }
                                         } else {
-                                            // Для COMMAND_EXIT у нас формат просто "ИмяОтрезавшегося" (например, "Владимир")
-                                            // Если этот пакет пришел НЕ от меня, значит, это мой собеседник вышел из связи!
+                                            // Для одиночной команды COMMAND_EXIT:Владимир
                                             sender = addressData.trim();
-                                            isTargetMe = !myRole.equalsIgnoreCase(sender);
+                                            receiver = "ALL"; // Сигнал сброса всех линий этого человека
                                         }
 
-                                        //Log.d(TAG, "[СЕРВИС] Команда: " + incomingCmd + " | От: " + sender + " | Предназначено мне: " + isTargetMe + " | Я: " + myRole);
-                                        Log.d(TAG, "[ТРЕКЕР EXIT] Команда: " + incomingCmd + " | Извлечен Sender: '" + sender + "' | Receiver: '" + receiver + "' | Моя роль в сервисе: '" + myRole + "' | Итог isTargetMe: " + isTargetMe);
-                                        if (isTargetMe) {
+                                        if (!sender.isEmpty()) {
+                                            Intent matrixIntent = null;
+
                                             if (incomingCmd.equals("START")) {
-                                                //Log.d(TAG, "[СЕРВИС] Нам звонят. Стреляем бродкастом INCOMING_CALL.");
-                                                Intent callIntent = new Intent("com.pectinworld.intercom.INCOMING_CALL");
-                                                callIntent.putExtra("CALLER_NAME", sender);
-                                                callIntent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
-                                                sendBroadcast(callIntent);
+                                                matrixIntent = new Intent("com.pectinworld.intercom.INCOMING_CALL");
 
-                                                showIncomingCallNotification(sender);
-                                                //Log.d(TAG, "ВЫЗЫВАЕМ playNotificationSound()");
-                                                playNotificationSound();
+                                                // Звуковой сигнал играем ТОЛЬКО если звонят лично мне!
+                                                if (cachedUserRole != null && cachedUserRole.trim().equalsIgnoreCase(receiver)) {
+                                                    showIncomingCallNotification(sender);
+                                                    playNotificationSound();
+                                                }
+                                            }
+                                            else if (incomingCmd.equals("ACCEPT")) {
+                                                //stopCallEffects();
+                                                matrixIntent = new Intent("com.pectinworld.intercom.CALL_ACCEPTED");
+                                            }
+                                            else if (incomingCmd.equals("REJECT") || incomingCmd.equals("EXIT")) {
+                                                //stopCallEffects();
+                                                matrixIntent = new Intent("com.pectinworld.intercom.CALL_REJECTED");
+                                            }
 
-                                            } else if (incomingCmd.equals("ACCEPT")) {
-                                                //Log.d(TAG, "[СЕРВИС] Наш вызов приняли! Стреляем бродкастом CALL_ACCEPTED.");
-                                                Intent acceptIntent = new Intent("com.pectinworld.intercom.CALL_ACCEPTED");
-                                                acceptIntent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
-                                                sendBroadcast(acceptIntent);
-
-
-                                                //Log.d(TAG, "[СЕРВИС] Получена команда на остановку эффектов вызова. - 2");
-                                                stopCallEffects();
-
-                                            } else if (incomingCmd.equals("REJECT") || incomingCmd.equals("EXIT")) {
-                                                // И REJECT (отказ на этапе вызова), и EXIT (сброс во время разговора)
-                                                // делают для нас одно и то же — закрывают сессию связи
-                                                //Log.d(TAG, "[СЕРВИС] Собеседник завершил связь (" + incomingCmd + "). Стреляем CALL_REJECTED.");
-                                                Intent rejectIntent = new Intent("com.pectinworld.intercom.CALL_REJECTED");
-                                                rejectIntent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
-                                                sendBroadcast(rejectIntent);
-
-                                                //Log.d(TAG, "[СЕРВИС] Получена команда на остановку эффектов вызова. - 3");
-                                                stopCallEffects();
+                                            // Передаем чистые сетевые имена в MainActivity
+                                            if (matrixIntent != null) {
+                                                matrixIntent.putExtra("SENDER_NAME", sender);
+                                                matrixIntent.putExtra("RECEIVER_NAME", receiver);
+                                                matrixIntent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND);
+                                                sendBroadcast(matrixIntent);
                                             }
                                         }
                                     }
@@ -407,43 +456,6 @@ public class IntercomService extends Service {
                         break;
                     }
                 }
-            }
-        }).start();
-    }
-
-    public void sendExitCommandDirectly(String targetName) {
-        new Thread(() -> {
-            try {
-                if (dos != null && tcpSocket != null && !tcpSocket.isClosed() && tcpSocket.isConnected()) {
-                    String myRole = (cachedUserRole != null) ? cachedUserRole.trim() : "Unknown";
-                    String callMessage = "COMMAND_EXIT:" + myRole + "-" + targetName;
-                    byte[] msgStringBytes = callMessage.getBytes("UTF-8");
-
-                    ByteArrayOutputStream txOs = new ByteArrayOutputStream();
-                    txOs.write(0x18); txOs.write(1); // channel_id = 1
-                    txOs.write(0x2A);
-                    // Используем твой стандартный varint для длины
-                    int length = msgStringBytes.length;
-                    while ((length & 0xFFFFFF80) != 0L) {
-                        txOs.write((length & 0x7F) | 0x80);
-                        length >>>= 7;
-                    }
-                    txOs.write(length & 0x7F);
-                    txOs.write(msgStringBytes);
-
-                    byte[] txBody = txOs.toByteArray();
-
-                    // Отправляем пакет типа 11 через живой synchronized стрим сервиса
-                    synchronized (dos) {
-                        dos.writeShort(11);
-                        dos.writeInt(txBody.length);
-                        dos.write(txBody);
-                        dos.flush();
-                    }
-                    Log.d(TAG, "[СЕРВИС] Пакет EXIT успешно отправлен напрямую: " + callMessage);
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Ошибка прямой отправки EXIT: " + e.getMessage());
             }
         }).start();
     }
