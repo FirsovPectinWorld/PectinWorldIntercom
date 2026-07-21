@@ -26,6 +26,7 @@ public class IntercomService extends Service {
     private static final String CHANNEL_ID = "IntercomServiceChannel";
 
     private android.media.Ringtone currentRingtone;
+    private android.media.MediaPlayer mediaPlayer;
     private android.app.NotificationManager notificationManager;
 
     public static final String ACTION_STOP_CALL_EFFECTS = "com.pectinworld.intercom.STOP_CALL_EFFECTS";
@@ -69,7 +70,17 @@ public class IntercomService extends Service {
             if ("com.pectinworld.intercom.STOP_CALL_EFFECTS".equals(action)) {
                 stopCallEffects();
             } else if ("com.pectinworld.intercom.START_CALL_EFFECTS".equals(action)) {
-                playNotificationSound(); // Физический запуск рингтона в сервисе
+                // 1. ЖЕСТКАЯ ЗАЧИСТКА: Убиваем всё, что могло играть или висеть на экране до этого момента
+                stopCallEffects();
+
+                // 2. БАННЕР: Публикуем новое всплывающее окно
+                String caller = intent.getStringExtra("CALLER_NAME");
+                if (caller != null) {
+                    showIncomingCallNotification(caller);
+                }
+
+                // 3. ЗВУК: Запускаем рингтон
+                playNotificationSound();
             } else if ("com.pectinworld.intercom.SEND_COMMAND".equals(action)) {
                 String payload = intent.getStringExtra("PAYLOAD");
                 if (payload != null) {
@@ -405,16 +416,18 @@ public class IntercomService extends Service {
 
                                                 // Звуковой сигнал играем ТОЛЬКО если звонят лично мне!
                                                 if (cachedUserRole != null && cachedUserRole.trim().equalsIgnoreCase(receiver)) {
+                                                    // СНАЧАЛА ЖЕСТКО ГЛУШИМ ВСЁ СТАРОЕ (ЗАЩИТА ОТ НАЛОЖЕНИЯ ВЫЗОВОВ!)
+                                                    stopCallEffects();
                                                     showIncomingCallNotification(sender);
                                                     playNotificationSound();
                                                 }
                                             }
                                             else if (incomingCmd.equals("ACCEPT")) {
-                                                //stopCallEffects();
+                                                stopCallEffects();
                                                 matrixIntent = new Intent("com.pectinworld.intercom.CALL_ACCEPTED");
                                             }
                                             else if (incomingCmd.equals("REJECT") || incomingCmd.equals("EXIT")) {
-                                                //stopCallEffects();
+                                                stopCallEffects();
                                                 matrixIntent = new Intent("com.pectinworld.intercom.CALL_REJECTED");
                                             }
 
@@ -501,7 +514,6 @@ public class IntercomService extends Service {
     }
 
     private void showIncomingCallNotification(String callerName) {
-        //Log.d(TAG, "==> [ЛОГ ВЫЗОВА] Метод showIncomingCallNotification ЗАПУЩЕН для: " + callerName);
         try {
             Intent openIntent = new Intent(this, MainActivity.class);
             openIntent.putExtra("LAUNCH_ACTION", "INCOMING_CALL");
@@ -513,10 +525,7 @@ public class IntercomService extends Service {
                     : android.app.PendingIntent.FLAG_UPDATE_CURRENT;
 
             android.app.PendingIntent openPendingIntent = android.app.PendingIntent.getActivity(
-                    this,
-                    1001,
-                    openIntent,
-                    pendingFlags
+                    this, 1001, openIntent, pendingFlags
             );
 
             Intent answerIntent = new Intent(this, MainActivity.class);
@@ -526,79 +535,79 @@ public class IntercomService extends Service {
             answerIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
 
             android.app.PendingIntent answerPendingIntent = android.app.PendingIntent.getActivity(
-                    this,
-                    1002,
-                    answerIntent,
-                    pendingFlags
+                    this, 1002, answerIntent, pendingFlags
             );
 
-            // КРИТИЧЕСКИ ВАЖНО: Меняем ID канала на абсолютно новый (например, V3),
-            // так как старые ID каналов Android кэширует в системе и не меняет их важность из кода!
-            String callChannelId = "IntercomHeadsUpChannel_V3";
+            // КРИТИЧЕСКИ ВАЖНО: Канал V8 для полного сброса системного кэша уведомлений
+            String callChannelId = "IntercomHeadsUpChannel_V8";
             NotificationManager manager = getSystemService(NotificationManager.class);
 
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                //Log.d(TAG, "[ЛОГ ВЫЗОВА] Создание абсолютно нового канала V3...");
                 NotificationChannel callChannel = new NotificationChannel(
-                        callChannelId,
-                        "Входящие вызовы (Интерком)",
-                        NotificationManager.IMPORTANCE_HIGH // Принудительный Heads-up баннер
+                        callChannelId, "Входящие вызовы (Интерком)", NotificationManager.IMPORTANCE_HIGH
                 );
                 callChannel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
                 callChannel.enableVibration(true);
+                callChannel.setVibrationPattern(new long[]{0, 500, 500, 500}); // Форсируем вибрацию
                 callChannel.enableLights(true);
-
-                if (manager != null) {
-                    manager.createNotificationChannel(callChannel);
-                    //Log.d(TAG, "[ЛОГ ВЫЗОВА] Канал V3 успешно зарегистрирован.");
-                }
+                if (manager != null) manager.createNotificationChannel(callChannel);
             }
 
             NotificationCompat.Builder builder = new NotificationCompat.Builder(this, callChannelId)
-                    // Меняем иконку на стандартную иконку приложения, она никогда не заблокируется системой
                     .setSmallIcon(android.R.drawable.sym_def_app_icon)
                     .setContentTitle("📞 Входящий вызов")
                     .setContentText("Вас вызывает: " + callerName)
                     .setPriority(NotificationCompat.PRIORITY_MAX)
-                    .setDefaults(NotificationCompat.DEFAULT_ALL)
                     .setCategory(NotificationCompat.CATEGORY_CALL)
                     .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                    // ============================================================
+                    // ЭТИ ДВЕ СТРОКИ ОБЯЗАТЕЛЬНЫ ДЛЯ ВСПЛЫВАЮЩЕГО БАННЕРА В ANDROID 8+
+                    .setDefaults(NotificationCompat.DEFAULT_ALL)
+                    .setVibrate(new long[]{0, 500, 500, 500})
+                    // ============================================================
                     .setContentIntent(openPendingIntent)
+                    .setFullScreenIntent(openPendingIntent, true)
                     .setAutoCancel(true)
                     .setOngoing(true)
                     .addAction(android.R.drawable.ic_menu_call, "ОТВЕТИТЬ", answerPendingIntent);
 
             if (manager != null) {
-                //Log.d(TAG, "[ЛОГ ВЫЗОВА] Публикация баннера через manager.notify(2)...");
                 manager.notify(2, builder.build());
-                //Log.d(TAG, "[ЛОГ ВЫЗОВА] Баннер успешно отправлен в систему.");
+                Log.d(TAG, "[БАННЕР] Уведомление V8 отправлено в систему!");
             }
 
         } catch (Exception e) {
-            //Log.e(TAG, "[ЛОГ ВЫЗОВА] Ошибка создания всплывающего баннера", e);
+            Log.e(TAG, "Ошибка создания всплывающего баннера", e);
         }
     }
 
-    // Метод для остановки звука и скрытия баннера
     private void stopCallEffects() {
-        //Log.d(TAG, "[СЕРВИС] Получена команда на остановку эффектов вызова.");
         try {
-            if (currentRingtone != null && currentRingtone.isPlaying()) {
-                currentRingtone.stop();
-                //Log.d(TAG, "[СЕРВИС] Рингтон остановлен.");
+            if (mediaPlayer != null) {
+                if (mediaPlayer.isPlaying()) {
+                    mediaPlayer.stop();
+                }
+                mediaPlayer.release();
+                mediaPlayer = null;
             }
             if (notificationManager != null) {
-                notificationManager.cancel(2); // ID 2 — это ID твоего баннера входящего вызова
-                //Log.d(TAG, "[СЕРВИС] Баннер уведомления удален.");
+                notificationManager.cancel(2);
             }
         } catch (Exception e) {
-            //Log.e(TAG, "Ошибка при остановке эффектов вызова", e);
+            Log.e(TAG, "Ошибка при остановке эффектов", e);
         }
     }
 
     private void playNotificationSound() {
         try {
-            stopCallEffects();
+            // Если плеер почему-то остался в памяти, глушим его
+            if (mediaPlayer != null) {
+                if (mediaPlayer.isPlaying()) {
+                    mediaPlayer.stop();
+                }
+                mediaPlayer.release();
+                mediaPlayer = null;
+            }
 
             android.net.Uri alert = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_RINGTONE);
             if (alert == null) {
@@ -606,14 +615,14 @@ public class IntercomService extends Service {
             }
 
             if (alert != null) {
-                currentRingtone = android.media.RingtoneManager.getRingtone(getApplicationContext(), alert);
-                if (currentRingtone != null) {
-                    currentRingtone.play();
-                    //Log.d(TAG, "Звуковой сигнал вызова успешно запущен.");
+                mediaPlayer = android.media.MediaPlayer.create(this, alert);
+                if (mediaPlayer != null) {
+                    mediaPlayer.setLooping(true); // Надежное зацикливание
+                    mediaPlayer.start();
                 }
             }
         } catch (Exception e) {
-            //Log.e(TAG, "Не удалось воспроизвести звуковой сигнал звонка", e);
+            Log.e(TAG, "Не удалось воспроизвести звук", e);
         }
     }
 

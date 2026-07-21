@@ -204,7 +204,7 @@ public class MainActivity extends AppCompatActivity {
     private void handleIncomingCallFromIntent(String callerName) {
         //Log.d(TAG, "[МЕТОД UI] Вызов handleIncomingCallFromIntent для абонента: " + callerName);
         if (welcomeText != null) {
-            welcomeText.setText("🚨 ВХОДЯЩИЙ ВЫЗОВ ОТ: " + callerName.toUpperCase());
+            welcomeText.setText("🚨 ВХОДЯЩИЙ ВЫЗОВ ОТ: " + getGenitiveName(callerName));
         }
 
         runOnUiThread(new Runnable() {
@@ -249,6 +249,16 @@ public class MainActivity extends AppCompatActivity {
             }
         });
         Toast.makeText(this, "Входящий вызов: " + callerName, Toast.LENGTH_LONG).show();
+    }
+
+    // НОВЫЙ МЕТОД: Склонение имен для красивого вывода
+    private String getGenitiveName(String name) {
+        if (name == null) return "";
+        String lower = name.toLowerCase().trim();
+        if (lower.equals("владимир")) return "ВЛАДИМИРА";
+        if (lower.equals("галина")) return "ГАЛИНЫ";
+        if (lower.equals("сергей")) return "СЕРГЕЯ";
+        return name.toUpperCase(); // Для неизвестных имен
     }
 
     private void handleLogin() {
@@ -369,6 +379,10 @@ public class MainActivity extends AppCompatActivity {
                 if (currentStatus == COLOR_INCOMING || currentStatus == COLOR_OUTGOING || currentStatus == COLOR_ACTIVE) {
                     final String finalTarget = target;
 
+                    // !!! ВОТ ЭТИ ДВЕ СТРОЧКИ: Жестко глушим звук при локальном сбросе
+                    Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
+                    sendBroadcast(stopIntent);
+
                     new Thread(() -> {
                         try {
                             sendCallPacket("COMMAND_CALL_REJECT:" + currentLoggedInRole + "-" + finalTarget);
@@ -378,10 +392,6 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }).start();
                 }
-
-                // === УБРАНО ЛОКАЛЬНОЕ УПРАВЛЕНИЕ ===
-                // Никаких seekBar.setProgress(0), stopAudio() и sendBroadcast здесь быть не должно!
-                // Всё это сделает "Мозг" (syncInterfaceAndAudioWithMatrix), когда сервер вернет эхо пакета.
             }
             else if (progress >= 95) {
                 seekBar.setProgress(100);
@@ -1059,27 +1069,21 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void sendAcceptPacket(String target) {
-        //Log.d(TAG, "[UI] Инициация отправки ACCEPT для: " + target);
+        private void sendAcceptPacket(String target) {
+            // Жестко и мгновенно глушим звук у себя через Broadcast
+            Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
+            sendBroadcast(stopIntent);
 
-        // Посылаем сигнал в собственный сервис, чтобы мгновенно выключить звук у себя
-        Intent stopIntent = new Intent(this, IntercomService.class);
-        stopIntent.setAction(IntercomService.ACTION_STOP_CALL_EFFECTS);
-        startService(stopIntent);
+            sendCallPacket("COMMAND_CALL_ACCEPT:" + currentLoggedInRole + "-" + target);
+        }
 
-        sendCallPacket("COMMAND_CALL_ACCEPT:" + currentLoggedInRole + "-" + target);
-    }
+        private void sendRejectPacket(String target) {
+            // Жестко и мгновенно глушим звук у себя через Broadcast
+            Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
+            sendBroadcast(stopIntent);
 
-    private void sendRejectPacket(String target) {
-        //Log.d(TAG, "[UI] Инициация отправки REJECT для: " + target);
-
-        // Посылаем сигнал в собственный сервис, чтобы мгновенно выключить звук у себя
-        Intent stopIntent = new Intent(this, IntercomService.class);
-        stopIntent.setAction(IntercomService.ACTION_STOP_CALL_EFFECTS);
-        startService(stopIntent);
-
-        sendCallPacket("COMMAND_CALL_REJECT:" + currentLoggedInRole + "-" + target);
-    }
+            sendCallPacket("COMMAND_CALL_REJECT:" + currentLoggedInRole + "-" + target);
+        }
 
     private void sendExitCommandToServer(final DataOutputStream finalDos) {
         if (finalDos == null) return;
@@ -1293,6 +1297,30 @@ public class MainActivity extends AppCompatActivity {
                 updateSliderUIByState(seekContactOne, stateSliderOne);
                 updateSliderUIByState(seekContactTwo, stateSliderTwo);
 
+                // =========================================================================
+                // ОБНОВЛЕНИЕ ТЕКСТА (ВХОДЯЩИЙ ВЫЗОВ ИЛИ ПРИВЕТСТВИЕ)
+                // =========================================================================
+                String callerName = null;
+                if (me.contains("владимир")) {
+                    if (stateSliderOne == 2) callerName = "Галина";
+                    else if (stateSliderTwo == 2) callerName = "Сергей";
+                } else if (me.contains("галина")) {
+                    if (stateSliderOne == 2) callerName = "Владимир";
+                    else if (stateSliderTwo == 2) callerName = "Сергей";
+                } else if (me.contains("сергей")) {
+                    if (stateSliderOne == 2) callerName = "Владимир";
+                    else if (stateSliderTwo == 2) callerName = "Галина";
+                }
+
+                if (welcomeText != null) {
+                    if (callerName != null) {
+                        welcomeText.setText("🚨 ВХОДЯЩИЙ ВЫЗОВ ОТ: " + getGenitiveName(callerName));
+                    } else {
+                        // Если входящих нет (уже идет разговор, сброс или покой) — возвращаем стандартное приветствие
+                        welcomeText.setText("Привет, " + currentLoggedInRole + "!");
+                    }
+                }
+
                 // Логируем ВСЮ матрицу для проверки её реального наполнения
                 Log.d("AUDIO2_SERVICE", "[МАТРИЦА СЫРЫЕ ДАННЫЕ] " + java.util.Arrays.toString(sliderMatrix));
 
@@ -1311,51 +1339,6 @@ public class MainActivity extends AppCompatActivity {
                         Log.d("AUDIO2_SERVICE", "[МОЗГ ГОЛОС] Беседа завершена. Выключаем аудио.");
                         stopAudio();
                     }
-                }
-
-                // =========================================================================
-                // РИНГТОН: Проверяем, звонит ли кто-то лично мне (Состояние 2 - INCOMING)
-                // И проверяем по индексам матрицы напрямую, без завязки на текст роли!
-                // =========================================================================
-                // =========================================================================
-                // РИНГТОН: Звонят ли ЛИЧНО МНЕ прямо сейчас? (Поведение на основе логов)
-                // =========================================================================
-                boolean amIReceivingCall = false;
-
-                if (me.contains("владимир")) {
-                    // Из логов: когда Владимиру звонят Галина или Сергей,
-                    // активными входящими становятся каналы ВГ (индекс 0) и ВС (индекс 1)
-                    if (sliderMatrix[0] == 2 || sliderMatrix[1] == 2) amIReceivingCall = true;
-
-                } else if (me.contains("галина")) {
-                    // Из логов: когда Владимир звонит Галине, загорается ГВ (индекс 2)
-                    // Если Сергей звонит Галине — загорится ГС (индекс 3)
-                    if (sliderMatrix[2] == 2 || sliderMatrix[3] == 2) amIReceivingCall = true;
-
-                } else if (me.contains("сергей")) {
-                    // Из логов: когда Владимир звонит Сергею, загорается СВ (индекс 4)
-                    // Если Галина звонит Сергею — загорится СГ (индекс 5)
-                    if (sliderMatrix[4] == 2 || sliderMatrix[5] == 2) amIReceivingCall = true;
-                }
-
-                Log.d("AUDIO2_SERVICE", "[МОЗГ ЗВУК] Моя роль: " + me + " -> Мне звонят (исправлено): " + amIReceivingCall);
-
-                // МЕНЕДЖЕР РИНГТОНА
-                if (amIReceivingCall) {
-                    if (!ringtoneStarted) {
-                        Log.d("AUDIO2_SERVICE", "[МОЗГ РИНГТОН] Детект звонка. ВКЛЮЧАЕМ ЗВУК.");
-                        ringtoneStarted = true;
-
-                        Intent startSound = new Intent("com.pectinworld.intercom.START_CALL_EFFECTS");
-                        sendBroadcast(startSound);
-                    }
-                } else {
-                    // Без условий: если вызовов к нам нет, жестко тушим звук везде
-                    Log.d("AUDIO2_SERVICE", "[МОЗГ РИНГТОН] Входящих вызовов нет. ВЫКЛЮЧАЕМ ЗВУК.");
-                    ringtoneStarted = false;
-
-                    Intent stopSound = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
-                    sendBroadcast(stopSound);
                 }
             }
         });
