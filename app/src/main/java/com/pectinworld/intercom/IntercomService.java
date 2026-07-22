@@ -37,6 +37,8 @@ public class IntercomService extends Service {
     private DataOutputStream dos;
 
     private String cachedUserRole = "Unknown";
+    // НОВАЯ ПЕРЕМЕННАЯ: Умная очередь активных входящих вызовов
+    private java.util.HashSet<String> activeIncomingCallers = new java.util.HashSet<>();
 
     private static final String SERVER_HOST = "95.214.62.90";
     private static final int SERVER_PORT = 64738;
@@ -53,8 +55,12 @@ public class IntercomService extends Service {
 
         // ХИТРАЯ СТРОЧКА: Добавляем экшен для старта рингтона
         filter.addAction("com.pectinworld.intercom.START_CALL_EFFECTS");
-
         filter.addAction("com.pectinworld.intercom.SEND_COMMAND");
+
+        // НОВЫЕ ФИЛЬТРЫ: Слушаем изменения состояния разговоров
+        filter.addAction("com.pectinworld.intercom.INCOMING_CALL");
+        filter.addAction("com.pectinworld.intercom.CALL_ACCEPTED");
+        filter.addAction("com.pectinworld.intercom.CALL_REJECTED");
 
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             registerReceiver(callCommandReceiver, filter, Context.RECEIVER_EXPORTED);
@@ -68,27 +74,74 @@ public class IntercomService extends Service {
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
             if ("com.pectinworld.intercom.STOP_CALL_EFFECTS".equals(action)) {
+                activeIncomingCallers.clear();
                 stopCallEffects();
             } else if ("com.pectinworld.intercom.START_CALL_EFFECTS".equals(action)) {
-                // 1. ЖЕСТКАЯ ЗАЧИСТКА: Убиваем всё, что могло играть или висеть на экране до этого момента
-                stopCallEffects();
-
-                // 2. БАННЕР: Публикуем новое всплывающее окно
                 String caller = intent.getStringExtra("CALLER_NAME");
                 if (caller != null) {
-                    showIncomingCallNotification(caller);
+                    activeIncomingCallers.add(caller);
+                    updateRingtoneAndBanner();
                 }
-
-                // 3. ЗВУК: Запускаем рингтон
-                playNotificationSound();
             } else if ("com.pectinworld.intercom.SEND_COMMAND".equals(action)) {
                 String payload = intent.getStringExtra("PAYLOAD");
-                if (payload != null) {
-                    sendCommandDirectly(payload);
+                if (payload != null) sendCommandDirectly(payload);
+            }
+            // === НОВЫЙ БЛОК УМНОЙ ОЧЕРЕДИ ===
+            else if ("com.pectinworld.intercom.INCOMING_CALL".equals(action)) {
+                String sender = intent.getStringExtra("SENDER_NAME");
+                String receiver = intent.getStringExtra("RECEIVER_NAME");
+                String myRole = (cachedUserRole != null) ? cachedUserRole.trim() : "Unknown";
+
+                // Если звонят лично мне — добавляем человека в список и обновляем музыку
+                if (myRole.equalsIgnoreCase(receiver) && sender != null) {
+                    activeIncomingCallers.add(sender);
+                    updateRingtoneAndBanner();
                 }
+            } else if ("com.pectinworld.intercom.CALL_ACCEPTED".equals(action)) {
+                // Если я взял трубку, звонков больше нет. Разговор начался.
+                activeIncomingCallers.clear();
+                updateRingtoneAndBanner();
+            } else if ("com.pectinworld.intercom.CALL_REJECTED".equals(action)) {
+                String sender = intent.getStringExtra("SENDER_NAME");
+                String receiver = intent.getStringExtra("RECEIVER_NAME");
+                String myRole = (cachedUserRole != null) ? cachedUserRole.trim() : "Unknown";
+
+                // Кто-то сбросил. Проверяем, касается ли это нас!
+                if ("ALL".equalsIgnoreCase(receiver)) {
+                    activeIncomingCallers.remove(sender);
+                } else {
+                    // Если сброс касается МЕНЯ, вычеркиваем второго человека из списка
+                    if (myRole.equalsIgnoreCase(sender)) {
+                        activeIncomingCallers.remove(receiver);
+                    } else if (myRole.equalsIgnoreCase(receiver)) {
+                        activeIncomingCallers.remove(sender);
+                    }
+                    // Если сброс между двумя другими людьми (Сергей и Владимир) — Галина этот код просто игнорирует!
+                }
+                // Проверяем, остался ли кто-то еще висеть на линии?
+                updateRingtoneAndBanner();
             }
         }
     };
+
+    // ГЛАВНЫЙ МЕТОД УПРАВЛЕНИЯ ЭФФЕКТАМИ
+    private void updateRingtoneAndBanner() {
+        if (activeIncomingCallers.isEmpty()) {
+            // Очередь пуста. Никто не звонит. Глушим всё!
+            stopCallEffects();
+        } else {
+            // Кто-то еще звонит! Берем его имя из списка
+            String remainingCaller = activeIncomingCallers.iterator().next();
+
+            // 1. Обновляем баннер на того, кто остался (система сама перепишет текст в шторке)
+            showIncomingCallNotification(remainingCaller);
+
+            // 2. Если музыка УЖЕ играет, мы ее не трогаем (чтобы не заикалась). Если не играет - запускаем.
+            if (mediaPlayer == null || !mediaPlayer.isPlaying()) {
+                playNotificationSound();
+            }
+        }
+    }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -413,21 +466,11 @@ public class IntercomService extends Service {
 
                                             if (incomingCmd.equals("START")) {
                                                 matrixIntent = new Intent("com.pectinworld.intercom.INCOMING_CALL");
-
-                                                // Звуковой сигнал играем ТОЛЬКО если звонят лично мне!
-                                                if (cachedUserRole != null && cachedUserRole.trim().equalsIgnoreCase(receiver)) {
-                                                    // СНАЧАЛА ЖЕСТКО ГЛУШИМ ВСЁ СТАРОЕ (ЗАЩИТА ОТ НАЛОЖЕНИЯ ВЫЗОВОВ!)
-                                                    stopCallEffects();
-                                                    showIncomingCallNotification(sender);
-                                                    playNotificationSound();
-                                                }
                                             }
                                             else if (incomingCmd.equals("ACCEPT")) {
-                                                stopCallEffects();
                                                 matrixIntent = new Intent("com.pectinworld.intercom.CALL_ACCEPTED");
                                             }
                                             else if (incomingCmd.equals("REJECT") || incomingCmd.equals("EXIT")) {
-                                                stopCallEffects();
                                                 matrixIntent = new Intent("com.pectinworld.intercom.CALL_REJECTED");
                                             }
 

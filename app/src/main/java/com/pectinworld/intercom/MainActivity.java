@@ -380,8 +380,8 @@ public class MainActivity extends AppCompatActivity {
                     final String finalTarget = target;
 
                     // !!! ВОТ ЭТИ ДВЕ СТРОЧКИ: Жестко глушим звук при локальном сбросе
-                    Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
-                    sendBroadcast(stopIntent);
+                    //Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
+                    //sendBroadcast(stopIntent);
 
                     new Thread(() -> {
                         try {
@@ -400,8 +400,8 @@ public class MainActivity extends AppCompatActivity {
                     seekBar.setTag(COLOR_ACTIVE);
                     setSliderTrackColor(seekBar, COLOR_ACTIVE);
 
-                    Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
-                    sendBroadcast(stopIntent);
+                    //Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
+                    //sendBroadcast(stopIntent);
 
                     sendAcceptPacket(target);
                     //startVoiceCommunication("Room_One");
@@ -1071,16 +1071,16 @@ public class MainActivity extends AppCompatActivity {
 
         private void sendAcceptPacket(String target) {
             // Жестко и мгновенно глушим звук у себя через Broadcast
-            Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
-            sendBroadcast(stopIntent);
+            //Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
+            //sendBroadcast(stopIntent);
 
             sendCallPacket("COMMAND_CALL_ACCEPT:" + currentLoggedInRole + "-" + target);
         }
 
         private void sendRejectPacket(String target) {
             // Жестко и мгновенно глушим звук у себя через Broadcast
-            Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
-            sendBroadcast(stopIntent);
+            //Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
+            //sendBroadcast(stopIntent);
 
             sendCallPacket("COMMAND_CALL_REJECT:" + currentLoggedInRole + "-" + target);
         }
