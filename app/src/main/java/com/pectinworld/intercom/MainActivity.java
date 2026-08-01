@@ -400,55 +400,7 @@ public class MainActivity extends AppCompatActivity {
                     seekBar.setTag(COLOR_ACTIVE);
                     setSliderTrackColor(seekBar, COLOR_ACTIVE);
 
-                    //Intent stopIntent = new Intent("com.pectinworld.intercom.STOP_CALL_EFFECTS");
-                    //sendBroadcast(stopIntent);
-
                     sendAcceptPacket(target);
-                    //startVoiceCommunication("Room_One");
-
-                    // =================================================================
-                    // АВТОМАТИЧЕСКИЙ СБРОС ВТОРОГО ВЫЗОВА (ЕСЛИ ОН БЫЛ)
-                    // =================================================================
-                    // Определяем, какой слайдер сейчас НЕ активен
-                    SeekBar secondarySeekBar = null;
-                    String secondaryTarget = "";
-
-                    if (seekBar.getId() == R.id.seekContactOne) {
-                        // Если Галина ответила Владимиру (слайдер 1), то второй — это Сергей
-                        secondarySeekBar = findViewById(R.id.seekContactTwo);
-                        secondaryTarget = "Владимир".equals(currentLoggedInRole) ? "Сергей" : ("Галина".equals(currentLoggedInRole) ? "Сергей" : "Галина");
-                    } else if (seekBar.getId() == R.id.seekContactTwo) {
-                        // If Галина ответила Сергею (слайдер 2), то второй — Владимир
-                        secondarySeekBar = findViewById(R.id.seekContactOne);
-                        secondaryTarget = "Владимир".equals(currentLoggedInRole) ? "Галина" : ("Галина".equals(currentLoggedInRole) ? "Владимир" : "Владимир");
-                    }
-
-                    if (secondarySeekBar != null) {
-                        int secStatus = (secondarySeekBar.getTag() != null) ? (int) secondarySeekBar.getTag() : COLOR_NEUTRAL;
-
-                        // Если по второму слайдеру тоже шел входящий звонок — гасим его!
-                        if (secStatus == COLOR_INCOMING) {
-                            //Log.d(TAG, "[АВТО-ОТБОЙ] Гасим параллельный вызов от: " + secondaryTarget);
-
-                            // 1. Сбрасываем визуальное состояние второго слайдера на экране
-                            secondarySeekBar.setProgress(0);
-                            secondarySeekBar.setTag(COLOR_NEUTRAL);
-                            setSliderTrackColor(secondarySeekBar, COLOR_NEUTRAL);
-
-                            // 2. Шлем второму вызывающему REJECT в сеть, чтобы его телефон успокоился
-                            final String finalSecTarget = secondaryTarget;
-                            new Thread(() -> {
-                                try {
-                                    sendCallPacket("COMMAND_CALL_REJECT:" + currentLoggedInRole + "-" + finalSecTarget);
-                                    //Log.d(TAG, "[АВТО-ОТБОЙ] Отправлен REJECT через сокет для: " + finalSecTarget);
-                                } catch (Exception e) {
-                                    //Log.e(TAG, "[АВТО-ОТБОЙ] Ошибка отправки авто-отбоя: ", e);
-                                }
-                            }).start();
-                        }
-                    }
-                    // =================================================================
-
                 } else {
                     seekBar.setTag(COLOR_OUTGOING);
                     setSliderTrackColor(seekBar, COLOR_OUTGOING);
@@ -1191,6 +1143,39 @@ public class MainActivity extends AppCompatActivity {
         seekBar.getThumb().setColorFilter(COLOR_THUMB, android.graphics.PorterDuff.Mode.SRC_IN);
     }
 
+    // НОВЫЙ МЕТОД: Централизованная зачистка "третьего лишнего"
+    private void autoRejectThirdPerson(String connectedSender, String connectedReceiver) {
+        String me = (currentLoggedInRole != null) ? currentLoggedInRole.trim() : "";
+
+        // 1. Действуем только если МЫ являемся участником начавшегося разговора
+        if (!me.equalsIgnoreCase(connectedSender) && !me.equalsIgnoreCase(connectedReceiver)) {
+            return; // Если Владимир и Сергей говорят, а я Галина — мне ничего сбрасывать не нужно
+        }
+
+        // 2. Вычисляем, кто остался за бортом
+        String thirdPerson = "";
+        String[] allUsers = {"Владимир", "Галина", "Сергей"};
+        for (String user : allUsers) {
+            if (!user.equalsIgnoreCase(connectedSender) && !user.equalsIgnoreCase(connectedReceiver)) {
+                thirdPerson = user;
+                break;
+            }
+        }
+
+        // 3. Отправляем команду REJECT третьему лицу, чтобы сбросить его матрицу и нашу
+        if (!thirdPerson.isEmpty()) {
+            String payload = "COMMAND_CALL_REJECT:" + me + "-" + thirdPerson;
+
+            // Шлем в сеть
+            Intent cmdIntent = new Intent("com.pectinworld.intercom.SEND_COMMAND");
+            cmdIntent.putExtra("PAYLOAD", payload);
+            sendBroadcast(cmdIntent);
+
+            // Применяем к себе (чтобы наши ползунки тоже сбросились в ноль)
+            simulateNetworkEchoLocally(payload);
+        }
+    }
+
     private final android.content.BroadcastReceiver incomingCallReceiver = new android.content.BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -1206,6 +1191,7 @@ public class MainActivity extends AppCompatActivity {
                 }
                 else if ("com.pectinworld.intercom.CALL_ACCEPTED".equals(action)) {
                     updateMatrixByNames(sender, receiver, "ACCEPT");
+                    autoRejectThirdPerson(sender, receiver);
                 }
                 else if ("com.pectinworld.intercom.CALL_REJECTED".equals(action)) {
                     if ("ALL".equalsIgnoreCase(receiver)) {
@@ -1298,26 +1284,50 @@ public class MainActivity extends AppCompatActivity {
                 updateSliderUIByState(seekContactTwo, stateSliderTwo);
 
                 // =========================================================================
-                // ОБНОВЛЕНИЕ ТЕКСТА (ВХОДЯЩИЙ ВЫЗОВ ИЛИ ПРИВЕТСТВИЕ)
+                // ПРОВЕРКА ЗАНЯТОСТИ ЛИНИИ (ОБЩАЕМСЯ НЕ МЫ)
                 // =========================================================================
-                String callerName = null;
+                boolean areOthersTalking = false;
+                String talking1 = "";
+                String talking2 = "";
+
+                // Проверяем индексы матрицы других абонентов на статус 3 (CONNECTED)
                 if (me.contains("владимир")) {
-                    if (stateSliderOne == 2) callerName = "Галина";
-                    else if (stateSliderTwo == 2) callerName = "Сергей";
+                    if (sliderMatrix[3] == 3 || sliderMatrix[5] == 3) { areOthersTalking = true; talking1 = "Галина"; talking2 = "Сергей"; }
                 } else if (me.contains("галина")) {
-                    if (stateSliderOne == 2) callerName = "Владимир";
-                    else if (stateSliderTwo == 2) callerName = "Сергей";
+                    if (sliderMatrix[1] == 3 || sliderMatrix[4] == 3) { areOthersTalking = true; talking1 = "Владимир"; talking2 = "Сергей"; }
                 } else if (me.contains("сергей")) {
-                    if (stateSliderOne == 2) callerName = "Владимир";
-                    else if (stateSliderTwo == 2) callerName = "Галина";
+                    if (sliderMatrix[0] == 3 || sliderMatrix[2] == 3) { areOthersTalking = true; talking1 = "Владимир"; talking2 = "Галина"; }
                 }
 
                 if (welcomeText != null) {
-                    if (callerName != null) {
-                        welcomeText.setText("🚨 ВХОДЯЩИЙ ВЫЗОВ ОТ: " + getGenitiveName(callerName));
+                    if (areOthersTalking) {
+                        // БЛОКИРУЕМ СЛАЙДЕРЫ И ПИШЕМ СТАТУС ЗАНЯТОСТИ
+                        if (seekContactOne != null) seekContactOne.setEnabled(false);
+                        if (seekContactTwo != null) seekContactTwo.setEnabled(false);
+                        welcomeText.setText("⛔ ЛИНИЯ ЗАНЯТА: " + talking1.toUpperCase() + " И " + talking2.toUpperCase() + " РАЗГОВАРИВАЮТ");
                     } else {
-                        // Если входящих нет (уже идет разговор, сброс или покой) — возвращаем стандартное приветствие
-                        welcomeText.setText("Привет, " + currentLoggedInRole + "!");
+                        // РАЗБЛОКИРУЕМ СЛАЙДЕРЫ, ЕСЛИ ОНИ БЫЛИ ЗАБЛОКИРОВАНЫ
+                        if (seekContactOne != null) seekContactOne.setEnabled(true);
+                        if (seekContactTwo != null) seekContactTwo.setEnabled(true);
+
+                        // СТАНДАРТНАЯ ЛОГИКА ТЕКСТА (ВЫЗОВ ИЛИ ПРИВЕТСТВИЕ)
+                        String callerName = null;
+                        if (me.contains("владимир")) {
+                            if (stateSliderOne == 2) callerName = "Галина";
+                            else if (stateSliderTwo == 2) callerName = "Сергей";
+                        } else if (me.contains("галина")) {
+                            if (stateSliderOne == 2) callerName = "Владимир";
+                            else if (stateSliderTwo == 2) callerName = "Сергей";
+                        } else if (me.contains("сергей")) {
+                            if (stateSliderOne == 2) callerName = "Владимир";
+                            else if (stateSliderTwo == 2) callerName = "Галина";
+                        }
+
+                        if (callerName != null) {
+                            welcomeText.setText("🚨 ВХОДЯЩИЙ ВЫЗОВ ОТ: " + getGenitiveName(callerName));
+                        } else {
+                            welcomeText.setText("Привет, " + currentLoggedInRole + "!");
+                        }
                     }
                 }
 
@@ -1329,7 +1339,6 @@ public class MainActivity extends AppCompatActivity {
                 // =========================================================================
                 boolean needVoice = (stateSliderOne == 3 || stateSliderTwo == 3);
                 if (needVoice) {
-                    // ИСПОЛЬЗУЕМ isSfxRunning для мгновенной защиты от двойного запуска
                     if (!isSfxRunning) {
                         Log.d("AUDIO2_SERVICE", "[МОЗГ ГОЛОС] Беседа активна. Включаем аудио.");
                         startVoiceCommunication("Room_One");
