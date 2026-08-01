@@ -183,6 +183,22 @@ public class MainActivity extends AppCompatActivity {
                 //Log.d("INTERCOM_MAIN", "Разрешение POST_NOTIFICATIONS уже есть.");
             }
         }
+
+        // =================================================================================
+        // ЗАЩИТА ОТ ГЛУБОКОГО СНА (DOZE MODE)
+        // =================================================================================
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                try {
+                    Intent intent = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                    intent.setData(android.net.Uri.parse("package:" + getPackageName()));
+                    startActivity(intent);
+                } catch (Exception e) {
+                    Log.e("AUDIO2_SERVICE", "Ошибка запроса отключения экономии батареи", e);
+                }
+            }
+        }
     }
 
     @Override
