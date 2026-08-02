@@ -40,12 +40,24 @@ public class IntercomService extends Service {
     // НОВАЯ ПЕРЕМЕННАЯ: Умная очередь активных входящих вызовов
     private java.util.HashSet<String> activeIncomingCallers = new java.util.HashSet<>();
 
+    private android.os.PowerManager.WakeLock wakeLock;
+
     private static final String SERVER_HOST = "95.214.62.90";
     private static final int SERVER_PORT = 64738;
 
     @Override
     public void onCreate() {
         super.onCreate();
+
+        // === ЗАХВАТЫВАЕМ ПРОЦЕССОР (ЗАЩИТА ОТ СНА) ===
+        android.os.PowerManager powerManager = (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (powerManager != null) {
+            // PARTIAL_WAKE_LOCK гарантирует, что CPU будет работать даже при выключенном экране
+            wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "IntercomService::KeepAliveLock");
+            wakeLock.acquire(); // Включаем удержание
+        }
+        // ===============================================
+
         createNotificationChannel();
         notificationManager = (android.app.NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
 
@@ -678,7 +690,10 @@ public class IntercomService extends Service {
         stopCallEffects();
         try { if (tcpSocket != null) tcpSocket.close(); } catch (Exception e) {}
 
-        //Log.d(TAG, "Сервис уничтожен");
+        // === ОТПУСКАЕМ ПРОЦЕССОР ===
+        if (wakeLock != null && wakeLock.isHeld()) {
+            wakeLock.release();
+        }
     }
 
     @Override
