@@ -270,7 +270,8 @@ public class IntercomService extends Service {
                                 dos.writeInt(0);
                                 dos.flush();
                             }
-                            //Log.d(TAG, "--> Отправлен фоновый Ping для поддержания соединения");
+                            String myRole = (cachedUserRole != null) ? cachedUserRole.trim() : "Unknown";
+                            sendCommandDirectly("COMMAND_ONLINE:" + myRole);
                         }
                     } catch (InterruptedException e) {
                         break;
@@ -295,6 +296,9 @@ public class IntercomService extends Service {
                     sc.init(null, trustAllCerts, new java.security.SecureRandom());
                     tcpSocket = (SSLSocket) sc.getSocketFactory().createSocket(SERVER_HOST, SERVER_PORT);
                     tcpSocket.setEnabledProtocols(new String[]{"TLSv1.2", "TLSv1.3"});
+
+                    tcpSocket.setSoTimeout(60000);
+
                     tcpSocket.startHandshake();
 
                     dos = new DataOutputStream(tcpSocket.getOutputStream());
@@ -439,7 +443,14 @@ public class IntercomService extends Service {
 
                                     //Log.d(TAG, "[СЕТЬ РАЗГОВОР] Прилетел пакет: " + incomingText);
 
-                                    if (incomingText.startsWith("COMMAND_CALL_START:")) {
+                                    if (incomingText.startsWith("COMMAND_ONLINE:")) {
+                                        String onlineUser = incomingText.substring("COMMAND_ONLINE:".length()).trim();
+                                        Intent onlineIntent = new Intent("com.pectinworld.intercom.USER_ONLINE");
+                                        onlineIntent.putExtra("ONLINE_USER", onlineUser);
+                                        sendBroadcast(onlineIntent);
+                                        incomingCmd = null; // Пропускаем логику звонков
+                                    }
+                                    else if (incomingText.startsWith("COMMAND_CALL_START:")) {
                                         incomingCmd = "START";
                                         addressData = incomingText.substring("COMMAND_CALL_START:".length()).trim();
                                     } else if (incomingText.startsWith("COMMAND_CALL_ACCEPT:")) {

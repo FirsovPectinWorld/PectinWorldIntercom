@@ -109,6 +109,9 @@ public class MainActivity extends AppCompatActivity {
     // ДИНАМИЧЕСКИЙ ПУЛ ДЕКОДЕРОВ
     private HashMap<Integer, MediaCodec> decoderPool = new HashMap<>();
 
+    // Хранилище времени последнего пинга
+    private HashMap<String, Long> lastSeenMap = new HashMap<>();
+
     private int mySession = -1;
     private boolean audioStarted = false;
     private String currentLoggedInRole = "Unknown";
@@ -200,6 +203,16 @@ public class MainActivity extends AppCompatActivity {
             }
         }
     }
+
+    // НОВОЕ: Таймер для автоматической проверки устаревших пингов
+    private android.os.Handler statusUpdateHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private Runnable statusUpdateRunnable = new Runnable() {
+        @Override
+        public void run() {
+            updateLastSeenUI();
+            statusUpdateHandler.postDelayed(this, 30000); // Проверять каждые 30 секунд
+        }
+    };
 
     @Override
     protected void onNewIntent(Intent intent) {
@@ -1201,6 +1214,15 @@ public class MainActivity extends AppCompatActivity {
             String sender = intent.getStringExtra("SENDER_NAME");
             String receiver = intent.getStringExtra("RECEIVER_NAME");
 
+            if ("com.pectinworld.intercom.USER_ONLINE".equals(action)) {
+                String onlineUser = intent.getStringExtra("ONLINE_USER");
+                if (onlineUser != null) {
+                    lastSeenMap.put(onlineUser, System.currentTimeMillis());
+                    updateLastSeenUI();
+                }
+                return; // Дальше не идем, матрицу звонков не трогаем
+            }
+
             if (sender != null && receiver != null) {
                 if ("com.pectinworld.intercom.INCOMING_CALL".equals(action)) {
                     updateMatrixByNames(sender, receiver, "START");
@@ -1225,6 +1247,61 @@ public class MainActivity extends AppCompatActivity {
             syncInterfaceAndAudioWithMatrix();
         }
     };
+
+    // НОВЫЙ МЕТОД: Обновление текста с временем последнего пинга
+    private void updateLastSeenUI() {
+        runOnUiThread(() -> {
+            java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("HH:mm:ss");
+
+            String baseText1 = ""; String baseText2 = "";
+            String target1 = "";   String target2 = "";
+
+            if ("Владимир".equals(currentLoggedInRole)) {
+                baseText1 = "👉 Свайп вправо: Вызвать Галину"; target1 = "Галина";
+                baseText2 = "👉 Свайп вправо: Вызвать Сергея"; target2 = "Сергей";
+            } else if ("Галина".equals(currentLoggedInRole)) {
+                baseText1 = "👉 Свайп вправо: Вызвать Владимира"; target1 = "Владимир";
+                baseText2 = "👉 Свайп вправо: Вызвать Сергея"; target2 = "Сергей";
+            } else if ("Сергей".equals(currentLoggedInRole)) {
+                baseText1 = "👉 Свайп вправо: Вызвать Владимира"; target1 = "Владимир";
+                baseText2 = "👉 Свайп вправо: Вызвать Галину"; target2 = "Галина";
+            }
+
+            applyBeautifulStatus(txtContactOne, baseText1, target1);
+            applyBeautifulStatus(txtContactTwo, baseText2, target2);
+        });
+    }
+
+    // Вспомогательный метод для красивой HTML-отрисовки статуса
+    private void applyBeautifulStatus(TextView tv, String baseText, String target) {
+        if (tv == null || baseText.isEmpty()) return;
+
+        String htmlText;
+        if (lastSeenMap.containsKey(target)) {
+            long lastTime = lastSeenMap.get(target);
+            long currentTime = System.currentTimeMillis();
+            long timeDifference = currentTime - lastTime;
+
+            java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("HH:mm:ss");
+            String timeStr = sdf.format(new java.util.Date(lastTime));
+
+            // Если пинг был меньше 2 минут назад (120 000 мс)
+            if (timeDifference < 120000) {
+                htmlText = baseText + "<br><br><font color='#86868B'><small>🟢 В сети: " + timeStr + "</small></font>";
+            } else {
+                // Если пинга нет дольше 2 минут - считаем оффлайн
+                htmlText = baseText + "<br><br><font color='#D32F2F'><small>🔴 Был(а) в сети: " + timeStr + "</small></font>";
+            }
+        } else {
+            // Если пинга еще не было вообще
+            htmlText = baseText + "<br><br><font color='#86868B'><small>⚪ Ожидание обновления статуса...</small></font>";}
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            tv.setText(android.text.Html.fromHtml(htmlText, android.text.Html.FROM_HTML_MODE_COMPACT));
+        } else {
+            tv.setText(android.text.Html.fromHtml(htmlText));
+        }
+    }
 
     // 1. Печать состояния матрицы в логcat
     private void logSliderMatrix(String triggerSource) {
@@ -1404,6 +1481,7 @@ public class MainActivity extends AppCompatActivity {
         filter.addAction("com.pectinworld.intercom.INCOMING_CALL"); // 1. Нам звонят
         filter.addAction("com.pectinworld.intercom.CALL_ACCEPTED");  // 2. Наш вызов приняли (Лимонный)
         filter.addAction("com.pectinworld.intercom.CALL_REJECTED");  // 3. Наш вызов отклонили (Сброс в желтый)
+        filter.addAction("com.pectinworld.intercom.USER_ONLINE");
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -1415,6 +1493,9 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception e) {
             //Log.e(TAG, "[АКТИВИТИ] Ошибка при регистрации ресивера", e);
         }
+
+        // НОВОЕ: Запускаем таймер проверки статусов
+        statusUpdateHandler.post(statusUpdateRunnable);
     }
 
     @Override
@@ -1426,6 +1507,9 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception e) {
             //Log.e(TAG, "[АКТИВИТИ] Ошибка при отписке ресивера", e);
         }
+
+        // НОВОЕ: Останавливаем таймер проверки статусов
+        statusUpdateHandler.removeCallbacks(statusUpdateRunnable);
     }
 
     @Override
