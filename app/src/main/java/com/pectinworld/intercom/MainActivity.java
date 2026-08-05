@@ -43,6 +43,23 @@ import androidx.core.content.ContextCompat;
 import android.content.Intent;
 import android.os.Build;
 
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+import android.net.Uri;
+
+import java.io.InputStream;
+import java.io.FileOutputStream;
+
+import android.app.DownloadManager;
+import android.os.Environment;
+import org.json.JSONArray;
+import okhttp3.Request;
+import okhttp3.OkHttpClient;
+
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "AUDIO2_SERVICE";
 
@@ -50,7 +67,7 @@ public class MainActivity extends AppCompatActivity {
 
     private LinearLayout loginBlock, intercomBlock;
     private EditText passwordInput;
-    private Button loginButton, btnGeneralCall;
+    private Button loginButton;
     private SeekBar seekContactOne, seekContactTwo;
     private TextView welcomeText, txtContactOne, txtContactTwo;
 
@@ -118,10 +135,68 @@ public class MainActivity extends AppCompatActivity {
 
     public static final String ACTION_SEND_EXIT = "com.pectinworld.intercom.SEND_EXIT";
 
+    // Переменная для хранения выбранного получателя
+    private String selectedTarget = "Галина"; // По умолчанию
+
+    private JSONArray pendingFiles = new JSONArray();
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+
+        // Вешаем слушатель на кнопку выбора файла
+        Button btnSelect = findViewById(R.id.btnSelectFile);
+        btnSelect.setOnClickListener(v -> {
+            // 1. Динамически формируем список тех, кому МОЖНО отправить файл (исключая себя)
+            java.util.List<String> recipientList = new java.util.ArrayList<>();
+
+            if (!"Владимир".equalsIgnoreCase(currentLoggedInRole)) {
+                recipientList.add("Владимир");
+            }
+            if (!"Галина".equalsIgnoreCase(currentLoggedInRole)) {
+                recipientList.add("Галина");
+            }
+            if (!"Сергей".equalsIgnoreCase(currentLoggedInRole)) {
+                recipientList.add("Сергей");
+            }
+            recipientList.add("Всем"); // Общий вариант
+
+            String[] recipients = recipientList.toArray(new String[0]);
+
+            // 2. Показываем всплывающее окно с актуальным списком
+            new androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("Кому отправляем файл?")
+                    .setItems(recipients, (dialog, which) -> {
+                        selectedTarget = recipients[which]; // Запоминаем выбор
+
+                        // 3. Открываем системный выбор файлов
+                        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                        intent.addCategory(Intent.CATEGORY_OPENABLE);
+                        intent.setType("*/*");
+                        filePickerLauncher.launch(intent);
+                    })
+                    .show();
+        });
+
+        Button btnIncomingFiles = findViewById(R.id.btnIncomingFiles);
+        btnIncomingFiles.setOnClickListener(v -> {
+            Log.d("UploadTest", "[UI] Пользователь физически нажал на кнопку!");
+            checkFilesOnServer(false);
+        });
+
+        Button btnOpenDownloads = findViewById(R.id.btnOpenDownloads);
+        btnOpenDownloads.setOnClickListener(v -> {
+            // Специальный системный Intent для открытия папки загрузок
+            Intent intent = new Intent(DownloadManager.ACTION_VIEW_DOWNLOADS);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            try {
+                startActivity(intent);
+            } catch (Exception e) {
+                Toast.makeText(this, "Нет системного менеджера загрузок", Toast.LENGTH_SHORT).show();
+            }
+        });
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, 100);
@@ -136,7 +211,6 @@ public class MainActivity extends AppCompatActivity {
         seekContactTwo = findViewById(R.id.seekContactTwo);
         txtContactOne = findViewById(R.id.txtContactOne);
         txtContactTwo = findViewById(R.id.txtContactTwo);
-        btnGeneralCall = findViewById(R.id.btnGeneralCall);
 
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         String savedRole = prefs.getString(KEY_USER_ROLE, null);
@@ -209,8 +283,13 @@ public class MainActivity extends AppCompatActivity {
     private Runnable statusUpdateRunnable = new Runnable() {
         @Override
         public void run() {
-            updateLastSeenUI();
-            statusUpdateHandler.postDelayed(this, 30000); // Проверять каждые 30 секунд
+            updateLastSeenUI(); // Твой существующий код
+
+            // НОВОЕ: Тихая проверка файлов
+            checkFilesOnServer(true);
+
+            // НОВОЕ: Меняем задержку с 30000 на 15000 (15 секунд)
+            statusUpdateHandler.postDelayed(this, 15000);
         }
     };
 
@@ -345,9 +424,6 @@ public class MainActivity extends AppCompatActivity {
         seekContactTwo.setProgress(0);
         seekContactTwo.setTag(COLOR_NEUTRAL); // Состояние покоя
         setSliderTrackColor(seekContactTwo, COLOR_NEUTRAL); // Красим дорожку в желтый, ползунок в темно-зеленый
-
-        btnGeneralCall.setEnabled(false);
-        btnGeneralCall.setAlpha(0.5f);
 
         // НАСТРОЙКА СЛАЙДЕРА №1
         seekContactOne.setOnSeekBarChangeListener(commonSliderListener);
@@ -1469,6 +1545,364 @@ public class MainActivity extends AppCompatActivity {
                 setSliderTrackColor(seekBar, COLOR_ACTIVE);
                 seekBar.setProgress(100);
                 break;
+        }
+    }
+
+    // 1. Создаем обработчик результата выбора файла
+    private final ActivityResultLauncher<Intent> filePickerLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                if (result.getResultCode() == RESULT_OK && result.getData() != null) {
+                    Uri uri = result.getData().getData();
+                    if (uri != null) {
+                        Log.d("UploadTest", "Пользователь выбрал файл, начинаем обработку...");
+                        processAndUploadFile(uri);
+                    }
+                }
+            }
+    );
+
+    // 3. Безопасное копирование файла и отправка
+    private void processAndUploadFile(Uri uri) {
+        // 1. Узнаем настоящее имя выбранного файла
+        String originalFileName = "unknown_file";
+        android.database.Cursor cursor = getContentResolver().query(uri, null, null, null, null);
+        if (cursor != null) {
+            try {
+                if (cursor.moveToFirst()) {
+                    int nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+                    if (nameIndex != -1) {
+                        originalFileName = cursor.getString(nameIndex);
+                    }
+                }
+            } finally {
+                cursor.close();
+            }
+        }
+
+        final String finalFileName = originalFileName;
+        LinearLayout uploadsContainer = findViewById(R.id.uploadsContainer);
+
+        // 2. Создаем элемент UI для этого конкретного файла
+        TextView statusView = new TextView(this);
+        statusView.setText("⏳ Подготовка: " + finalFileName);
+        statusView.setTextSize(14f);
+        statusView.setTextColor(android.graphics.Color.parseColor("#86868B"));
+        statusView.setPadding(0, 8, 0, 8);
+
+        // Добавляем строчку на экран
+        uploadsContainer.addView(statusView);
+
+        // Запускаем процесс в фоне
+        new Thread(() -> {
+            try {
+                File tempFile = new File(getCacheDir(), "upload_temp_" + System.currentTimeMillis() + ".tmp");
+                InputStream inputStream = getContentResolver().openInputStream(uri);
+                FileOutputStream outputStream = new FileOutputStream(tempFile);
+
+                byte[] buffer = new byte[4096];
+                int read;
+                while ((read = inputStream.read(buffer)) != -1) {
+                    outputStream.write(buffer, 0, read);
+                }
+
+                outputStream.flush();
+                outputStream.close();
+                if (inputStream != null) inputStream.close();
+
+                // 3. Файл скопирован в кэш, начинаем сетевую отправку
+                runOnUiThread(() -> {
+                    statusView.setText("🚀 Отправка на сервер: " + finalFileName);
+                    statusView.setTextColor(android.graphics.Color.parseColor("#0071E3")); // Синий цвет
+                });
+
+// 4. Вызываем загрузчик и передаем ему коллбэк для обновления UI
+                FileUploader.uploadFileToServer(tempFile, finalFileName, selectedTarget, new FileUploader.UploadCallback() {
+                    @Override
+                    public void onSuccess() {
+                        runOnUiThread(() -> {
+                            statusView.setText("✅ На сервере: " + finalFileName);
+                            statusView.setTextColor(android.graphics.Color.parseColor("#34C759")); // Зеленый цвет
+
+                            // Плавно удаляем строчку через 4 секунды (4000 миллисекунд)
+                            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                                uploadsContainer.removeView(statusView);
+                            }, 4000);
+                        });
+                    }
+
+                    @Override
+                    public void onError(String errorMsg) {
+                        runOnUiThread(() -> {
+                            statusView.setText("❌ Ошибка (" + finalFileName + "): " + errorMsg);
+                            statusView.setTextColor(android.graphics.Color.parseColor("#FF3B30")); // Красный цвет
+
+                            // Ошибку держим на экране чуть дольше (6 секунд), чтобы успеть прочитать
+                            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                                uploadsContainer.removeView(statusView);
+                            }, 12000);
+                        });
+                    }
+                });
+
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    statusView.setText("❌ Ошибка подготовки: " + finalFileName);
+                    statusView.setTextColor(android.graphics.Color.parseColor("#FF3B30"));
+                });
+            }
+        }).start();
+    }
+
+    // Метод опроса сервера с подробным логированием
+    private void checkFilesOnServer(boolean isSilent) {
+        if (currentLoggedInRole == null || "Unknown".equals(currentLoggedInRole)) {
+            Log.e("UploadTest", "[CHECK] ОШИБКА: Роль не определена!");
+            return;
+        }
+
+        String encodedTarget = android.net.Uri.encode(currentLoggedInRole.trim());
+        String url = "http://95.214.62.90:8080/check?target=" + encodedTarget;
+        Log.d("UploadTest", "[CHECK] Старт запроса. isSilent: " + isSilent + ", URL: " + url);
+
+        Request request = new Request.Builder().url(url).build();
+
+        new OkHttpClient().newCall(request).enqueue(new okhttp3.Callback() {
+            @Override
+            public void onFailure(okhttp3.Call call, java.io.IOException e) {
+                Log.e("UploadTest", "[CHECK] Ошибка сети (onFailure): " + e.getMessage(), e);
+                if (!isSilent) {
+                    runOnUiThread(() -> Toast.makeText(MainActivity.this, "Ошибка связи с сервером", Toast.LENGTH_SHORT).show());
+                }
+            }
+
+            @Override
+            public void onResponse(okhttp3.Call call, okhttp3.Response response) throws java.io.IOException {
+                int code = response.code();
+                Log.d("UploadTest", "[CHECK] Получен ответ от сервера. HTTP Код: " + code);
+
+                if (response.isSuccessful() && response.body() != null) {
+                    try {
+                        String jsonData = response.body().string().trim();
+                        Log.d("UploadTest", "[CHECK] Чистое тело ответа: " + jsonData);
+
+                        pendingFiles = new JSONArray(); // Очищаем список
+
+                        if (!jsonData.isEmpty()) {
+                            // Если вдруг сервер когда-то начнет отдавать правильный JSON
+                            if (jsonData.startsWith("[")) {
+                                pendingFiles = new JSONArray(jsonData);
+                            } else {
+                                // Если сервер отдает просто строку через запятую
+                                String[] fileNames = jsonData.split(",");
+                                for (String name : fileNames) {
+                                    if (!name.trim().isEmpty()) {
+                                        pendingFiles.put(name.trim());
+                                    }
+                                }
+                            }
+                        }
+                        Log.d("UploadTest", "[CHECK] Распознано файлов: " + pendingFiles.length());
+
+                        runOnUiThread(() -> {
+                            Button btnIncoming = findViewById(R.id.btnIncomingFiles);
+                            LinearLayout container = findViewById(R.id.incomingFilesContainer);
+
+                            if (pendingFiles.length() > 0) {
+                                btnIncoming.setText("Новые файлы (" + pendingFiles.length() + ")! Нажмите для загрузки");
+                                btnIncoming.setBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#34C759")));
+                            } else {
+                                btnIncoming.setText("Входящих файлов нет");
+                                btnIncoming.setBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#86868B")));
+                                container.removeAllViews();
+                            }
+
+                            if (!isSilent) {
+                                if (pendingFiles.length() == 0) {
+                                    Toast.makeText(MainActivity.this, "Новых файлов пока нет", Toast.LENGTH_SHORT).show();
+                                } else {
+                                    showFilesList(container);
+                                }
+                            }
+                        });
+                    } catch (Exception e) {
+                        Log.e("UploadTest", "[CHECK] Критическая ошибка при парсинге JSON: " + e.getMessage(), e);
+                    }
+                } else {
+                    Log.e("UploadTest", "[CHECK] Сервер вернул ошибку ответа! Код: " + code);
+                    if (response.body() != null) {
+                        Log.e("UploadTest", "[CHECK] Тело ошибки сервера: " + response.body().string());
+                    }
+                    if (!isSilent) {
+                        runOnUiThread(() -> Toast.makeText(MainActivity.this, "Ошибка сервера: код " + code, Toast.LENGTH_LONG).show());
+                    }
+                }
+            }
+        });
+    }
+
+    // Метод отрисовки списка
+    private void showFilesList(LinearLayout container) {
+        container.removeAllViews();
+        for (int i = 0; i < pendingFiles.length(); i++) {
+            try {
+                String fileName = pendingFiles.getString(i);
+                addDownloadButton(fileName, container);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    // Метод создания системного загрузчика для каждого файла
+    private void addDownloadButton(String fileName, LinearLayout container) {
+        Button downloadBtn = new Button(this);
+
+        String tempName = fileName;
+        if (fileName.length() > 30) {
+            tempName = "Файл " + fileName.substring(fileName.lastIndexOf("."));
+        }
+        final String displayName = tempName;
+
+        downloadBtn.setText("⬇ Скачать: " + displayName);
+        downloadBtn.setAllCaps(false);
+        downloadBtn.setTextSize(15f);
+
+        // Дизайн кнопки по умолчанию
+        android.graphics.drawable.GradientDrawable shape = new android.graphics.drawable.GradientDrawable();
+        shape.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        shape.setCornerRadius(24f);
+        shape.setColor(android.graphics.Color.parseColor("#E8F2FC")); // Нежно-голубой
+
+        downloadBtn.setBackground(shape);
+        downloadBtn.setTextColor(android.graphics.Color.parseColor("#0071E3")); // Синий текст
+        downloadBtn.setPadding(32, 24, 32, 24);
+        downloadBtn.setStateListAnimator(null);
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, 0, 0, 16);
+        downloadBtn.setLayoutParams(params);
+
+        downloadBtn.setOnClickListener(v -> {
+            // 1. МГНОВЕННАЯ РЕАКЦИЯ ИНТЕРФЕЙСА: Меняем текст и блокируем повторное нажатие
+            downloadBtn.setText("⏳ Скачивание: " + displayName);
+            shape.setColor(android.graphics.Color.parseColor("#F2F2F7")); // Серый фон
+            downloadBtn.setBackground(shape);
+            downloadBtn.setTextColor(android.graphics.Color.parseColor("#86868B"));
+            downloadBtn.setEnabled(false);
+
+            // Настраиваем загрузчик
+            DownloadManager.Request request = new DownloadManager.Request(
+                    Uri.parse("http://95.214.62.90:8080/download/" + fileName));
+
+            request.setTitle(displayName);
+            request.setDescription("PectinWorld Intercom");
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "PectinWorld/" + fileName);
+
+            DownloadManager manager = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+            if (manager != null) {
+                // Запускаем скачивание и получаем уникальный ID задачи
+                long downloadId = manager.enqueue(request);
+
+                // 2. ФОНОВЫЙ МОНИТОРИНГ: Следим за процессом
+                new Thread(() -> {
+                    boolean isDownloading = true;
+                    while (isDownloading) {
+                        DownloadManager.Query q = new DownloadManager.Query();
+                        q.setFilterById(downloadId);
+                        android.database.Cursor cursor = manager.query(q);
+
+                        if (cursor != null && cursor.moveToFirst()) {
+                            int statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS);
+                            if (statusIndex != -1) {
+                                int status = cursor.getInt(statusIndex);
+
+                                // Если успешно скачалось
+                                if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                                    isDownloading = false;
+
+                                    // 1. Системный менеджер сам дает нам безопасный Uri скачанного файла и его тип
+                                    Uri downloadedFileUri = manager.getUriForDownloadedFile(downloadId);
+                                    String mimeType = manager.getMimeTypeForDownloadedFile(downloadId);
+
+                                    runOnUiThread(() -> {
+                                        downloadBtn.setText("✅ Открыть: " + displayName);
+                                        shape.setColor(android.graphics.Color.parseColor("#E5F9E7")); // Светло-зеленый фон
+                                        downloadBtn.setBackground(shape);
+                                        downloadBtn.setTextColor(android.graphics.Color.parseColor("#34C759")); // Зеленый текст
+
+                                        // 2. ВАЖНО: Разблокируем кнопку и вешаем на нее новое действие - открытие файла
+                                        downloadBtn.setEnabled(true);
+                                        downloadBtn.setOnClickListener(view -> {
+                                            if (downloadedFileUri != null) {
+                                                Intent openIntent = new Intent(Intent.ACTION_VIEW);
+                                                // Передаем файл и его тип, чтобы Android знал, чем его открывать
+                                                openIntent.setDataAndType(downloadedFileUri, mimeType != null ? mimeType : "*/*");
+                                                // Даем временное разрешение другому приложению (например, Галерее) прочитать этот файл
+                                                openIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                                                try {
+                                                    startActivity(openIntent);
+                                                } catch (Exception e) {
+                                                    Toast.makeText(MainActivity.this, "Нет приложения для просмотра этого файла", Toast.LENGTH_SHORT).show();
+                                                }
+                                            }
+                                        });
+
+                                        // 3. Увеличиваем таймер исчезновения до 10 секунд, чтобы ты успел нажать
+                                        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                                            container.removeView(downloadBtn);
+                                            resetIncomingButtonIfEmpty(container);
+                                        }, 4000);
+                                    });
+                                }
+                                // Если ошибка
+                                else if (status == DownloadManager.STATUS_FAILED) {
+                                    isDownloading = false;
+                                    runOnUiThread(() -> {
+                                        downloadBtn.setText("❌ Ошибка загрузки");
+                                        shape.setColor(android.graphics.Color.parseColor("#FFEEEE")); // Светло-красный фон
+                                        downloadBtn.setBackground(shape);
+                                        downloadBtn.setTextColor(android.graphics.Color.parseColor("#FF3B30")); // Красный текст
+
+                                        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                                            container.removeView(downloadBtn);
+                                            resetIncomingButtonIfEmpty(container);
+                                        }, 4000);
+                                    });
+                                }
+                            }
+                        } else {
+                            // Если пользователь сам отменил загрузку в шторке
+                            isDownloading = false;
+                            runOnUiThread(() -> {
+                                container.removeView(downloadBtn);
+                                resetIncomingButtonIfEmpty(container);
+                            });
+                        }
+
+                        if (cursor != null) cursor.close();
+
+                        // Опрашиваем статус раз в секунду
+                        if (isDownloading) {
+                            try { Thread.sleep(1000); } catch (InterruptedException e) {}
+                        }
+                    }
+                }).start();
+            }
+        });
+
+        container.addView(downloadBtn);
+    }
+
+    // Вспомогательный метод для сброса главной серой кнопки
+    private void resetIncomingButtonIfEmpty(LinearLayout container) {
+        if (container.getChildCount() == 0) {
+            Button btnIncoming = findViewById(R.id.btnIncomingFiles);
+            if (btnIncoming != null) {
+                btnIncoming.setText("Входящих файлов нет");
+                btnIncoming.setBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#86868B")));
+                pendingFiles = new JSONArray(); // Сбрасываем кэш
+            }
         }
     }
 

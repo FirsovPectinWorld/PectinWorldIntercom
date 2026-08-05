@@ -39,4 +39,7 @@ dependencies {
 
     // Библиотеку парсинга оставляем — она стабильна и не зависит от плагинов сборки
     implementation 'com.google.protobuf:protobuf-javalite:3.25.1'
+
+    // Добавляем OkHttp для удобной отправки файлов на наш сервер
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 }
