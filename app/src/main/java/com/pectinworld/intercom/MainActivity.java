@@ -1746,34 +1746,37 @@ public class MainActivity extends AppCompatActivity {
         container.removeAllViews();
         for (int i = 0; i < pendingFiles.length(); i++) {
             try {
-                String fileName = pendingFiles.getString(i);
-                addDownloadButton(fileName, container);
+                // Извлекаем объект из нового JSON-массива
+                org.json.JSONObject fileObj = pendingFiles.getJSONObject(i);
+                String fileId = fileObj.getString("id");     // Тот самый длинный UUID (695a9...)
+                String fileName = fileObj.getString("name"); // Красивое имя (Чертеж.pdf)
+
+                // Передаем оба параметра в кнопку
+                addDownloadButton(fileId, fileName, container);
             } catch (Exception ignored) {}
         }
     }
 
     // Метод создания системного загрузчика для каждого файла
-    private void addDownloadButton(String fileName, LinearLayout container) {
+    // Обрати внимание: теперь передаем fileId и originalName
+    private void addDownloadButton(String fileId, String originalName, LinearLayout container) {
         Button downloadBtn = new Button(this);
 
-        String tempName = fileName;
-        if (fileName.length() > 30) {
-            tempName = "Файл " + fileName.substring(fileName.lastIndexOf("."));
-        }
-        final String displayName = tempName;
+        // Прогоняем имя через наш генератор дубликатов (Windows style)
+        final String finalDisplayName = getUniqueLocalFileName(originalName);
 
-        downloadBtn.setText("⬇ Скачать: " + displayName);
+        downloadBtn.setText("⬇ Скачать: " + finalDisplayName);
         downloadBtn.setAllCaps(false);
         downloadBtn.setTextSize(15f);
 
-        // Дизайн кнопки по умолчанию
+        // Дизайн кнопки
         android.graphics.drawable.GradientDrawable shape = new android.graphics.drawable.GradientDrawable();
         shape.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
         shape.setCornerRadius(24f);
-        shape.setColor(android.graphics.Color.parseColor("#E8F2FC")); // Нежно-голубой
+        shape.setColor(android.graphics.Color.parseColor("#E8F2FC"));
 
         downloadBtn.setBackground(shape);
-        downloadBtn.setTextColor(android.graphics.Color.parseColor("#0071E3")); // Синий текст
+        downloadBtn.setTextColor(android.graphics.Color.parseColor("#0071E3"));
         downloadBtn.setPadding(32, 24, 32, 24);
         downloadBtn.setStateListAnimator(null);
 
@@ -1783,28 +1786,28 @@ public class MainActivity extends AppCompatActivity {
         downloadBtn.setLayoutParams(params);
 
         downloadBtn.setOnClickListener(v -> {
-            // 1. МГНОВЕННАЯ РЕАКЦИЯ ИНТЕРФЕЙСА: Меняем текст и блокируем повторное нажатие
-            downloadBtn.setText("⏳ Скачивание: " + displayName);
-            shape.setColor(android.graphics.Color.parseColor("#F2F2F7")); // Серый фон
+            // Мгновенная реакция UI
+            downloadBtn.setText("⏳ Скачивание: " + finalDisplayName);
+            shape.setColor(android.graphics.Color.parseColor("#F2F2F7"));
             downloadBtn.setBackground(shape);
             downloadBtn.setTextColor(android.graphics.Color.parseColor("#86868B"));
             downloadBtn.setEnabled(false);
 
-            // Настраиваем загрузчик
+            // ВАЖНО: Качаем по надежному UUID, а серверу сообщаем, что качает ТЕЛЕФОН (?device=mobile)
             DownloadManager.Request request = new DownloadManager.Request(
-                    Uri.parse("http://95.214.62.90:8080/download/" + fileName));
+                    Uri.parse("http://95.214.62.90:8080/download/" + fileId + "?device=mobile"));
 
-            request.setTitle(displayName);
+            request.setTitle(finalDisplayName);
             request.setDescription("PectinWorld Intercom");
             request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "PectinWorld/" + fileName);
+
+            // ВАЖНО: Сохраняем локально под финальным КРАСИВЫМ именем
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "PectinWorld/" + finalDisplayName);
 
             DownloadManager manager = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
             if (manager != null) {
-                // Запускаем скачивание и получаем уникальный ID задачи
                 long downloadId = manager.enqueue(request);
 
-                // 2. ФОНОВЫЙ МОНИТОРИНГ: Следим за процессом
                 new Thread(() -> {
                     boolean isDownloading = true;
                     while (isDownloading) {
@@ -1817,28 +1820,23 @@ public class MainActivity extends AppCompatActivity {
                             if (statusIndex != -1) {
                                 int status = cursor.getInt(statusIndex);
 
-                                // Если успешно скачалось
                                 if (status == DownloadManager.STATUS_SUCCESSFUL) {
                                     isDownloading = false;
 
-                                    // 1. Системный менеджер сам дает нам безопасный Uri скачанного файла и его тип
                                     Uri downloadedFileUri = manager.getUriForDownloadedFile(downloadId);
                                     String mimeType = manager.getMimeTypeForDownloadedFile(downloadId);
 
                                     runOnUiThread(() -> {
-                                        downloadBtn.setText("✅ Открыть: " + displayName);
-                                        shape.setColor(android.graphics.Color.parseColor("#E5F9E7")); // Светло-зеленый фон
+                                        downloadBtn.setText("✅ Открыть: " + finalDisplayName);
+                                        shape.setColor(android.graphics.Color.parseColor("#E5F9E7"));
                                         downloadBtn.setBackground(shape);
-                                        downloadBtn.setTextColor(android.graphics.Color.parseColor("#34C759")); // Зеленый текст
+                                        downloadBtn.setTextColor(android.graphics.Color.parseColor("#34C759"));
 
-                                        // 2. ВАЖНО: Разблокируем кнопку и вешаем на нее новое действие - открытие файла
                                         downloadBtn.setEnabled(true);
                                         downloadBtn.setOnClickListener(view -> {
                                             if (downloadedFileUri != null) {
                                                 Intent openIntent = new Intent(Intent.ACTION_VIEW);
-                                                // Передаем файл и его тип, чтобы Android знал, чем его открывать
                                                 openIntent.setDataAndType(downloadedFileUri, mimeType != null ? mimeType : "*/*");
-                                                // Даем временное разрешение другому приложению (например, Галерее) прочитать этот файл
                                                 openIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                                                 try {
                                                     startActivity(openIntent);
@@ -1848,21 +1846,18 @@ public class MainActivity extends AppCompatActivity {
                                             }
                                         });
 
-                                        // 3. Увеличиваем таймер исчезновения до 10 секунд, чтобы ты успел нажать
                                         new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
                                             container.removeView(downloadBtn);
                                             resetIncomingButtonIfEmpty(container);
-                                        }, 4000);
+                                        }, 10000);
                                     });
-                                }
-                                // Если ошибка
-                                else if (status == DownloadManager.STATUS_FAILED) {
+                                } else if (status == DownloadManager.STATUS_FAILED) {
                                     isDownloading = false;
                                     runOnUiThread(() -> {
                                         downloadBtn.setText("❌ Ошибка загрузки");
-                                        shape.setColor(android.graphics.Color.parseColor("#FFEEEE")); // Светло-красный фон
+                                        shape.setColor(android.graphics.Color.parseColor("#FFEEEE"));
                                         downloadBtn.setBackground(shape);
-                                        downloadBtn.setTextColor(android.graphics.Color.parseColor("#FF3B30")); // Красный текст
+                                        downloadBtn.setTextColor(android.graphics.Color.parseColor("#FF3B30"));
 
                                         new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
                                             container.removeView(downloadBtn);
@@ -1872,7 +1867,6 @@ public class MainActivity extends AppCompatActivity {
                                 }
                             }
                         } else {
-                            // Если пользователь сам отменил загрузку в шторке
                             isDownloading = false;
                             runOnUiThread(() -> {
                                 container.removeView(downloadBtn);
@@ -1882,7 +1876,6 @@ public class MainActivity extends AppCompatActivity {
 
                         if (cursor != null) cursor.close();
 
-                        // Опрашиваем статус раз в секунду
                         if (isDownloading) {
                             try { Thread.sleep(1000); } catch (InterruptedException e) {}
                         }
@@ -1903,6 +1896,40 @@ public class MainActivity extends AppCompatActivity {
                 btnIncoming.setBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#86868B")));
                 pendingFiles = new JSONArray(); // Сбрасываем кэш
             }
+        }
+    }
+
+    // Метод генерации уникального имени файла в стиле Windows
+    private String getUniqueLocalFileName(String originalName) {
+        java.io.File downloadDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS);
+        java.io.File pectinDir = new java.io.File(downloadDir, "PectinWorld");
+
+        if (!pectinDir.exists()) {
+            pectinDir.mkdirs();
+        }
+
+        java.io.File file = new java.io.File(pectinDir, originalName);
+        if (!file.exists()) {
+            return originalName; // Файл уникален, оставляем как есть
+        }
+
+        // Разделяем имя и расширение (например: "Отчет" и ".pdf")
+        String nameWithoutExt = originalName;
+        String ext = "";
+        int dotIndex = originalName.lastIndexOf('.');
+        if (dotIndex > 0) {
+            nameWithoutExt = originalName.substring(0, dotIndex);
+            ext = originalName.substring(dotIndex);
+        }
+
+        int counter = 1;
+        while (true) {
+            String newName = nameWithoutExt + " (" + counter + ")" + ext;
+            java.io.File newFile = new java.io.File(pectinDir, newName);
+            if (!newFile.exists()) {
+                return newName; // Нашли свободное имя
+            }
+            counter++;
         }
     }
 
