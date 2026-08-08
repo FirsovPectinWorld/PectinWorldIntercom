@@ -1555,6 +1555,19 @@ public class MainActivity extends AppCompatActivity {
                 if (result.getResultCode() == RESULT_OK && result.getData() != null) {
                     Uri uri = result.getData().getData();
                     if (uri != null) {
+                        // 1. Устанавливаем лимит (500 МБ в байтах)
+                        long MAX_FILE_SIZE = 500L * 1024L * 1024L;
+
+                        // 2. Узнаем реальный вес выбранного файла
+                        long actualSize = getFileSize(uri);
+
+                        // 3. Проверяем и блокируем, если файл слишком тяжелый
+                        if (actualSize > MAX_FILE_SIZE) {
+                            Toast.makeText(this, "Файл слишком большой! Максимальный размер 500 МБ.", Toast.LENGTH_LONG).show();
+                            Log.e("UploadTest", "Отправка отменена: файл превышает 500 МБ (" + actualSize + " байт).");
+                            return; // Прерываем обработку
+                        }
+
                         Log.d("UploadTest", "Пользователь выбрал файл, начинаем обработку...");
                         processAndUploadFile(uri);
                     }
@@ -1709,7 +1722,7 @@ public class MainActivity extends AppCompatActivity {
                             LinearLayout container = findViewById(R.id.incomingFilesContainer);
 
                             if (pendingFiles.length() > 0) {
-                                btnIncoming.setText("Новые файлы (" + pendingFiles.length() + ")! Нажмите для загрузки");
+                                btnIncoming.setText("Новые файлы (" + pendingFiles.length() + ")!\nНажмите для загрузки");
                                 btnIncoming.setBackgroundTintList(android.content.res.ColorStateList.valueOf(android.graphics.Color.parseColor("#34C759")));
                             } else {
                                 btnIncoming.setText("Входящих файлов нет");
@@ -1931,6 +1944,22 @@ public class MainActivity extends AppCompatActivity {
             }
             counter++;
         }
+    }
+
+    // Метод для получения точного размера файла по его Uri
+    private long getFileSize(android.net.Uri uri) {
+        long size = 0;
+        try (android.database.Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int sizeIndex = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE);
+                if (sizeIndex != -1) {
+                    size = cursor.getLong(sizeIndex);
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return size;
     }
 
     @Override
